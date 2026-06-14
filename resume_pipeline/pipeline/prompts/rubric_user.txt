@@ -1,0 +1,7 @@
+Resume:
+{resume_json}
+
+Job Requirements:
+{requirements_json}
+
+Evaluate the candidate against the rubric. Return JSON only.

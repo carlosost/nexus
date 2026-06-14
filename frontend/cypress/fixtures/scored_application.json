@@ -1,0 +1,16 @@
+{
+  "application_id": "app-001",
+  "final_score": 0.82,
+  "confidence": 1.0,
+  "gate_passed": true,
+  "gate_outcome": "pass",
+  "semantic_score": 0.79,
+  "rubric_score": 0.84,
+  "rubric_breakdown": {
+    "core_skills": 4.5,
+    "relevant_experience": 4.2,
+    "scope_impact": 4.0,
+    "domain_alignment": 3.8,
+    "education_certs": 3.5
+  }
+}

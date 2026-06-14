@@ -1,0 +1,117 @@
+# ---------------------------------------------------------------------------
+# Elvex Nexus — Resume Evaluation Pipeline
+#
+# Single-command bootstrap (fully automated — no manual steps required):
+#
+#   docker compose up --build
+#
+# The app container will automatically:
+#   1. Wait for PostgreSQL to be healthy
+#   2. Run Django migrations
+#   3. Seed demo data (Alice / Bob / Carol)
+#   4. Start Gunicorn on http://localhost:8000
+#
+# LLM backend options:
+#   LLM_BACKEND=mock         docker compose up --build   # default (no API key)
+#   LLM_BACKEND=openai       OPENAI_API_KEY=sk-... docker compose up --build
+#   LLM_BACKEND=anthropic    ANTHROPIC_API_KEY=...  docker compose up --build
+#
+# Reset demo data:
+#   docker compose run --rm app python manage.py seed_demo --purge
+#   docker compose run --rm app python manage.py seed_demo
+# ---------------------------------------------------------------------------
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL + pgvector
+  # ---------------------------------------------------------------------------
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB:       elvex_nexus
+      POSTGRES_USER:     elvex
+      POSTGRES_PASSWORD: elvex_dev_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test:     ["CMD-SHELL", "pg_isready -U elvex -d elvex_nexus"]
+      interval: 5s
+      timeout:  5s
+      retries:  10
+
+  # ---------------------------------------------------------------------------
+  # Django application
+  # ---------------------------------------------------------------------------
+  app:
+    build:
+      context:    .
+      dockerfile: Dockerfile
+      target:     runtime
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Django core
+      DJANGO_SETTINGS_MODULE: config.settings.local
+      DJANGO_SECRET_KEY:      ${DJANGO_SECRET_KEY:-insecure-dev-secret-change-in-prod}
+      ALLOWED_HOSTS:          ${ALLOWED_HOSTS:-localhost,127.0.0.1,0.0.0.0}
+      IS_PRODUCTION:          ${IS_PRODUCTION:-false}
+
+      # Database (points to the `db` service above)
+      DATABASE_URL: postgres://elvex:${POSTGRES_PASSWORD:-elvex_dev_password}@db:5432/elvex_nexus
+
+      # LLM backend — "mock" | "openai" | "anthropic"
+      # Defaults to "mock" so the stack boots without any API credentials.
+      LLM_BACKEND:      ${LLM_BACKEND:-mock}
+      OPENAI_API_KEY:   ${OPENAI_API_KEY:-}
+      OPENAI_MODEL:     ${OPENAI_MODEL:-gpt-4o-mini}
+      ANTHROPIC_API_KEY:  ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL:    ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
+
+      # Logging — structured JSON to stdout (parsed by docker logs / Cloud logging)
+      DJANGO_LOG_LEVEL: ${DJANGO_LOG_LEVEL:-INFO}
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      # ── Development bind-mount ──────────────────────────────────────────
+      # Mounts the host source tree at /app for live-reload without rebuilds.
+      # In production, remove this entry so the image's baked-in copy is used.
+      - .:/app
+
+      # ── Gap 2 fix: named volume for uploaded resume files ───────────────
+      # Docker applies volumes in declaration order.  This named volume is
+      # mounted AFTER the bind-mount above, so it shadows /app/media/resumes
+      # with a Docker-managed directory that is:
+      #
+      #   (a) always owned by appuser (initialised from the image layer where
+      #       we ran: mkdir -p /app/media/resumes && chown -R appuser:appuser /app)
+      #   (b) persistent across `docker compose down` (data survives restarts)
+      #   (c) immune to host-UID mismatches that cause "Permission denied" when
+      #       the bind-mount at /app is owned by root or a different UID
+      #
+      # To wipe uploaded files: docker volume rm elvex-nexus_local_resume_media
+      - local_resume_media:/app/media/resumes
+
+    healthcheck:
+      test:         ["CMD", "curl", "-f", "http://localhost:8000/api/health/"]
+      interval:     10s
+      timeout:      5s
+      retries:      6
+      start_period: 45s   # Allow time for migrate + seed_demo to complete
+
+# ---------------------------------------------------------------------------
+# Named volumes
+# ---------------------------------------------------------------------------
+volumes:
+  # PostgreSQL data — survives container recreation
+  postgres_data:
+
+  # Resume PDF uploads — writable by appuser regardless of host-UID bind-mount
+  # (see Gap 2 fix comment in the app service volumes block above)
+  local_resume_media:
