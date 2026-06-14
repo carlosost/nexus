@@ -1,4 +1,23 @@
 # ---------------------------------------------------------------------------
+# Elvex Nexus — multi-stage Docker build
+#
+# Runtime environment variables (set via docker-compose.yml or -e flags):
+#
+#   LLM_BACKEND          "mock" | "openai" | "anthropic"   (default: mock)
+#   LLM_BACKEND_FALLBACK optional secondary provider for automatic failover.
+#                        When set and different from LLM_BACKEND, a
+#                        FallbackLLMBackend wraps both providers.  Primary
+#                        exhausts its tenacity retries first; on failure the
+#                        fallback completes the evaluation and stamps
+#                        RubricScore.is_evaluated_via_fallback = True.
+#                        Leave unset to run in single-provider mode.
+#
+#   OPENAI_API_KEY       required when LLM_BACKEND or LLM_BACKEND_FALLBACK = "openai"
+#   OPENAI_MODEL         (default: gpt-4o-mini)
+#   ANTHROPIC_API_KEY    required when LLM_BACKEND or LLM_BACKEND_FALLBACK = "anthropic"
+#   ANTHROPIC_MODEL      (default: claude-haiku-4-5-20251001)
+#
+# ---------------------------------------------------------------------------
 # Stage 1: dependency builder
 #
 # Installs all Python dependencies into an isolated prefix (/install) so the

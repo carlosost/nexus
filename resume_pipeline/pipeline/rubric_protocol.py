@@ -39,10 +39,15 @@ class RubricResult:
                           supports the assigned scores. In [0, 1].
         criterion_scores: Raw per-competency scores on a [1, 5] scale.
                           May be empty for stub implementations.
+        is_evaluated_via_fallback: True when a primary LLM provider failure
+                          caused the result to be produced by a secondary
+                          (fallback) provider. Surfaced to the DB and API
+                          so reviewers can see a visual alert.
     """
     normalized_score: float
     evidence_quality: float
     criterion_scores: dict[str, float] = field(default_factory=dict)
+    is_evaluated_via_fallback: bool = False
 
 
 # ---------------------------------------------------------------------------

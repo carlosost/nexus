@@ -46,6 +46,11 @@ class AuditEventType(str, Enum):
     DOCUMENT_PARSED = "document_parsed"
     PARSER_FALLBACK = "parser_fallback"
     DOCUMENT_PARSE_FAILED = "document_parse_failed"
+    # LLM Resilience — provider failover events
+    PRIMARY_LLM_FAILED = "primary_llm_failed"
+    FALLBACK_LLM_ENGAGED = "fallback_llm_engaged"
+    FALLBACK_LLM_SUCCEEDED = "fallback_llm_succeeded"
+    FALLBACK_LLM_EXHAUSTED = "fallback_llm_exhausted"
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +228,7 @@ class StructuredAuditLogger:
         confidence: Optional[float] = None,
         model_name: Optional[str] = None,
         retry_count: Optional[int] = None,
+        is_evaluated_via_fallback: bool = False,
     ) -> None:
         self._emit(
             event_type=AuditEventType.SCORE_COMPUTED,
@@ -238,6 +244,102 @@ class StructuredAuditLogger:
                 "confidence": confidence,
                 "model_name": model_name,
                 "retry_count": retry_count,
+                "is_evaluated_via_fallback": is_evaluated_via_fallback,
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # LLM Resilience — provider failover events
+    # ------------------------------------------------------------------
+
+    def log_primary_llm_failed(
+        self,
+        provider: str,
+        error_type: str,
+        error_message: str,
+        retry_count: Optional[int] = None,
+    ) -> None:
+        """
+        Emitted when the primary LLM provider raises after exhausting all
+        tenacity retries. Signals imminent handoff to the fallback provider.
+
+        Example JSON::
+
+            {"event": "primary_llm_failed", "provider": "openai",
+             "error_type": "RateLimitError", "retry_count": 3,
+             "error_message": "rate limit exceeded"}
+        """
+        self._emit(
+            event_type=AuditEventType.PRIMARY_LLM_FAILED,
+            payload={
+                "provider": provider,
+                "error_type": error_type,
+                "error_message": error_message,
+                "retry_count": retry_count,
+            },
+        )
+
+    def log_fallback_llm_engaged(
+        self,
+        primary_provider: str,
+        target_provider: str,
+    ) -> None:
+        """
+        Emitted the moment the fallback provider is about to be called.
+
+        Example JSON::
+
+            {"event": "fallback_llm_engaged", "primary_provider": "openai",
+             "target_provider": "anthropic"}
+        """
+        self._emit(
+            event_type=AuditEventType.FALLBACK_LLM_ENGAGED,
+            payload={
+                "primary_provider": primary_provider,
+                "target_provider": target_provider,
+            },
+        )
+
+    def log_fallback_llm_succeeded(
+        self,
+        provider: str,
+    ) -> None:
+        """
+        Emitted when the fallback provider returns a valid completion.
+
+        Example JSON::
+
+            {"event": "fallback_llm_succeeded", "provider": "anthropic"}
+        """
+        self._emit(
+            event_type=AuditEventType.FALLBACK_LLM_SUCCEEDED,
+            payload={"provider": provider},
+        )
+
+    def log_fallback_llm_exhausted(
+        self,
+        primary_provider: str,
+        fallback_provider: str,
+        error_type: str,
+        error_message: str,
+    ) -> None:
+        """
+        Emitted when both primary and fallback providers fail. The pipeline
+        will surface an exception to the caller.
+
+        Example JSON::
+
+            {"event": "fallback_llm_exhausted", "primary_provider": "openai",
+             "fallback_provider": "anthropic", "error_type": "APIConnectionError",
+             "error_message": "network unreachable"}
+        """
+        self._emit(
+            event_type=AuditEventType.FALLBACK_LLM_EXHAUSTED,
+            payload={
+                "primary_provider": primary_provider,
+                "fallback_provider": fallback_provider,
+                "error_type": error_type,
+                "error_message": error_message,
             },
         )
 

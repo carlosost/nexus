@@ -116,6 +116,11 @@ class PipelineResult:
     total_latency_ms: float
     confidence: Optional[float]
 
+    # LLM resilience — True when primary provider failed and fallback was used.
+    # Callers should persist this to RubricScore.is_evaluated_via_fallback
+    # so the reviewer UI can surface a visual alert.
+    is_evaluated_via_fallback: bool = False
+
 
 # ---------------------------------------------------------------------------
 # Orchestrator
@@ -252,12 +257,15 @@ class PipelineOrchestrator:
         )
 
         # Capture the backend model name if the rubric evaluator exposes it.
-        rubric_model_name = getattr(self._rubric, "_llm", None)
+        rubric_llm = getattr(self._rubric, "_llm", None)
         rubric_model_name = (
-            rubric_model_name.model_name
-            if rubric_model_name is not None
+            rubric_llm.model_name
+            if rubric_llm is not None
             else getattr(self._rubric, "model_name", "unknown")
         )
+
+        # LLM resilience — did a fallback provider complete this evaluation?
+        is_evaluated_via_fallback = rubric_result.is_evaluated_via_fallback
 
         audit_logger.log_score_computed(
             application_id=app_id,
@@ -268,6 +276,7 @@ class PipelineOrchestrator:
             evidence_quality=rubric_result.evidence_quality,
             confidence=confidence,
             model_name=rubric_model_name,
+            is_evaluated_via_fallback=is_evaluated_via_fallback,
         )
 
         total_ms = (time.perf_counter() - run_start) * 1000
@@ -285,6 +294,7 @@ class PipelineOrchestrator:
             stages_executed=stages_executed,
             total_latency_ms=round(total_ms, 3),
             confidence=confidence,
+            is_evaluated_via_fallback=is_evaluated_via_fallback,
         )
 
     # ------------------------------------------------------------------

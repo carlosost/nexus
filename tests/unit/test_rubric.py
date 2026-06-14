@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import math
+from unittest.mock import MagicMock
+
 import pytest
 
 from resume_pipeline.pipeline.rubric_score import (
@@ -571,6 +573,7 @@ class TestOpenAIRubricBackendRetry:
     def _make_backend(self, client_mock) -> "OpenAIRubricBackend":
         backend = self.OpenAIRubricBackend.__new__(self.OpenAIRubricBackend)
         backend._model = "gpt-4o-mini"
+        backend._max_retries = 3
         backend._client = client_mock
         return backend
 

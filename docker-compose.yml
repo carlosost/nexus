@@ -12,9 +12,26 @@
 #   4. Start Gunicorn on http://localhost:8000
 #
 # LLM backend options:
-#   LLM_BACKEND=mock         docker compose up --build   # default (no API key)
-#   LLM_BACKEND=openai       OPENAI_API_KEY=sk-... docker compose up --build
-#   LLM_BACKEND=anthropic    ANTHROPIC_API_KEY=...  docker compose up --build
+#
+#   # No API keys — deterministic mock scores (default)
+#   docker compose up --build
+#
+#   # Single provider (no fallback)
+#   LLM_BACKEND=openai    OPENAI_API_KEY=sk-...   docker compose up --build
+#   LLM_BACKEND=anthropic ANTHROPIC_API_KEY=...   docker compose up --build
+#
+#   # Resilience fallback: OpenAI primary → Anthropic secondary
+#   LLM_BACKEND=openai LLM_BACKEND_FALLBACK=anthropic \
+#     OPENAI_API_KEY=sk-... ANTHROPIC_API_KEY=... docker compose up --build
+#
+#   # Resilience fallback: Anthropic primary → OpenAI secondary
+#   LLM_BACKEND=anthropic LLM_BACKEND_FALLBACK=openai \
+#     ANTHROPIC_API_KEY=... OPENAI_API_KEY=sk-... docker compose up --build
+#
+# When LLM_BACKEND_FALLBACK is set, make_rubric_backend() automatically
+# wraps both providers in FallbackLLMBackend.  If the primary exhausts its
+# tenacity retry budget, the fallback provider completes the evaluation and
+# is_evaluated_via_fallback=True is written to the RubricScore row.
 #
 # Reset demo data:
 #   docker compose run --rm app python manage.py seed_demo --purge
@@ -64,13 +81,22 @@ services:
       # Database (points to the `db` service above)
       DATABASE_URL: postgres://elvex:${POSTGRES_PASSWORD:-elvex_dev_password}@db:5432/elvex_nexus
 
-      # LLM backend — "mock" | "openai" | "anthropic"
-      # Defaults to "mock" so the stack boots without any API credentials.
-      LLM_BACKEND:      ${LLM_BACKEND:-mock}
-      OPENAI_API_KEY:   ${OPENAI_API_KEY:-}
-      OPENAI_MODEL:     ${OPENAI_MODEL:-gpt-4o-mini}
-      ANTHROPIC_API_KEY:  ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_MODEL:    ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
+      # ── LLM backend ────────────────────────────────────────────────────
+      # LLM_BACKEND        — primary provider: "mock" | "openai" | "anthropic"
+      #                      Defaults to "mock" so the stack boots without keys.
+      # LLM_BACKEND_FALLBACK — optional secondary provider for automatic failover.
+      #                      When set (and different from LLM_BACKEND), a
+      #                      FallbackLLMBackend wraps both providers: the primary
+      #                      runs first (with its own tenacity retries); on
+      #                      exhaustion the fallback completes the evaluation and
+      #                      RubricScore.is_evaluated_via_fallback is set to True.
+      #                      Leave unset to disable fallback (single-provider mode).
+      LLM_BACKEND:          ${LLM_BACKEND:-mock}
+      LLM_BACKEND_FALLBACK: ${LLM_BACKEND_FALLBACK:-}
+      OPENAI_API_KEY:       ${OPENAI_API_KEY:-}
+      OPENAI_MODEL:         ${OPENAI_MODEL:-gpt-4o-mini}
+      ANTHROPIC_API_KEY:    ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL:      ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
 
       # Logging — structured JSON to stdout (parsed by docker logs / Cloud logging)
       DJANGO_LOG_LEVEL: ${DJANGO_LOG_LEVEL:-INFO}

@@ -6,15 +6,19 @@
 #
 #   0. Ensure writable media directory exists
 #   1. Wait for the PostgreSQL database to accept connections
-#   2. Apply all pending Django migrations
-#   3. Seed the database with demo data  (idempotent — safe on every restart)
-#   4. Hand off to Gunicorn
+#   2. Validate LLM backend configuration (warn on missing keys / no-op fallback)
+#   3. Apply all pending Django migrations
+#   4. Seed the database with demo data  (idempotent — safe on every restart)
+#   5. Hand off to Gunicorn
 #
 # Environment variables (all have defaults):
 #   DJANGO_SETTINGS_MODULE  — defaults to config.settings.local
 #   GUNICORN_WORKERS        — defaults to 2
 #   GUNICORN_TIMEOUT        — defaults to 120 s
 #   DJANGO_LOG_LEVEL        — defaults to info
+#   LLM_BACKEND             — "mock" | "openai" | "anthropic"  (default: mock)
+#   LLM_BACKEND_FALLBACK    — optional secondary provider; when set and different
+#                             from LLM_BACKEND, activates FallbackLLMBackend
 # ---------------------------------------------------------------------------
 
 set -euo pipefail
@@ -81,7 +85,48 @@ sys.exit(1)
 PYEOF
 
 # ---------------------------------------------------------------------------
-# 2. Migrations
+# 2. LLM backend validation
+#
+# Warn on obvious misconfiguration before the app starts serving requests.
+# These are non-fatal warnings — the server still starts so operators can
+# correct the env vars and restart without a full image rebuild.
+#
+# Checks:
+#   a) LLM_BACKEND=openai without OPENAI_API_KEY
+#   b) LLM_BACKEND=anthropic without ANTHROPIC_API_KEY
+#   c) LLM_BACKEND_FALLBACK=openai without OPENAI_API_KEY
+#   d) LLM_BACKEND_FALLBACK=anthropic without ANTHROPIC_API_KEY
+#   e) LLM_BACKEND_FALLBACK set to the same value as LLM_BACKEND (no-op)
+# ---------------------------------------------------------------------------
+echo "[entrypoint] Validating LLM backend configuration..."
+
+_LLM_BACKEND="${LLM_BACKEND:-mock}"
+_LLM_FALLBACK="${LLM_BACKEND_FALLBACK:-}"
+
+_check_key() {
+    local provider="$1" key_var="$2" role="$3"
+    if [ "$provider" = "openai" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
+        echo "[entrypoint] WARNING: ${role}=openai but OPENAI_API_KEY is not set — rubric scoring will fail at runtime." >&2
+    fi
+    if [ "$provider" = "anthropic" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+        echo "[entrypoint] WARNING: ${role}=anthropic but ANTHROPIC_API_KEY is not set — rubric scoring will fail at runtime." >&2
+    fi
+}
+
+_check_key "$_LLM_BACKEND"  "" "LLM_BACKEND"
+if [ -n "$_LLM_FALLBACK" ]; then
+    _check_key "$_LLM_FALLBACK" "" "LLM_BACKEND_FALLBACK"
+    if [ "$_LLM_FALLBACK" = "$_LLM_BACKEND" ]; then
+        echo "[entrypoint] WARNING: LLM_BACKEND_FALLBACK='${_LLM_FALLBACK}' equals LLM_BACKEND — fallback wrapper will not be created (same-provider guard)." >&2
+    else
+        echo "[entrypoint] LLM resilience: primary=${_LLM_BACKEND}, fallback=${_LLM_FALLBACK} (FallbackLLMBackend active)"
+    fi
+else
+    echo "[entrypoint] LLM backend: ${_LLM_BACKEND} (single-provider mode, no fallback)"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Migrations
 #
 # --noinput suppresses any interactive prompts (safe in CI and container boot).
 # Migrations are idempotent; re-running on a fully-migrated database is a
@@ -94,7 +139,7 @@ echo "[entrypoint] Applying migrations..."
 python manage.py migrate --noinput
 
 # ---------------------------------------------------------------------------
-# 3. Demo data seeding  (M0.6 — idempotent via get_or_create)
+# 4. Demo data seeding  (M0.6 — idempotent via get_or_create)
 #
 # Inserts the three canonical demo records (Alice / Bob / Carol) that the
 # smoke test and the reviewer workflow depend on.  Uses natural-key
@@ -105,7 +150,7 @@ echo "[entrypoint] Seeding demo data..."
 python manage.py seed_demo
 
 # ---------------------------------------------------------------------------
-# 4. Application server
+# 5. Application server
 #
 # exec replaces the shell process so Gunicorn becomes PID 1 and receives
 # SIGTERM cleanly from `docker stop` / `docker compose down`.

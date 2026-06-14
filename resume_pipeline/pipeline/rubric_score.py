@@ -277,21 +277,16 @@ class AnthropicRubricBackend:
 # Backend factory — env-var driven
 # ---------------------------------------------------------------------------
 
-def make_rubric_backend(
-    backend: str | None = None,
-) -> "LLMBackendProtocol":
+def _build_single_backend(choice: str) -> "LLMBackendProtocol":
     """
-    Instantiate the correct LLM backend.
-
-    Priority: explicit `backend` argument → LLM_BACKEND env var → "mock".
+    Instantiate one concrete backend by name.
 
     Args:
-        backend: "openai" | "anthropic" | "mock" (or None to read env var)
+        choice: "openai" | "anthropic" | "mock"
 
     Returns:
-        An object satisfying LLMBackendProtocol.
+        A concrete LLMBackendProtocol implementation.
     """
-    choice = backend or os.environ.get("LLM_BACKEND", "mock")
     if choice == "openai":
         model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
         return OpenAIRubricBackend(model=model)
@@ -299,6 +294,59 @@ def make_rubric_backend(
         model = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
         return AnthropicRubricBackend(model=model)
     return MockLLMBackend("")
+
+
+def make_rubric_backend(
+    backend: str | None = None,
+    fallback: str | None = None,
+) -> "LLMBackendProtocol":
+    """
+    Instantiate the correct LLM backend, optionally with automatic failover.
+
+    Priority order:
+      1. Explicit ``backend`` argument
+      2. ``LLM_BACKEND`` env var
+      3. ``"mock"`` (safe default — no API key required)
+
+    Fallback wiring:
+      If ``fallback`` argument is given OR ``LLM_BACKEND_FALLBACK`` env var
+      is set (and differs from the primary), a :class:`FallbackLLMBackend`
+      is returned that wraps both providers.  The primary is attempted first
+      (with its own tenacity retries); only if it raises does the fallback
+      engage.
+
+    Args:
+        backend:  "openai" | "anthropic" | "mock" (or None to read env var).
+        fallback: "openai" | "anthropic" | "mock" (or None to read env var).
+
+    Returns:
+        An object satisfying LLMBackendProtocol — either a single concrete
+        backend or a FallbackLLMBackend wrapping primary + secondary.
+
+    Examples::
+
+        # Explicit fallback chain (typical production call):
+        make_rubric_backend("openai", "anthropic")
+
+        # Env-var driven (used by docker-compose and make_rubric_backend()):
+        # LLM_BACKEND=openai LLM_BACKEND_FALLBACK=anthropic
+        make_rubric_backend()
+
+        # Single provider, no fallback:
+        make_rubric_backend("openai")
+    """
+    primary_choice = backend or os.environ.get("LLM_BACKEND", "mock")
+    fallback_choice = fallback or os.environ.get("LLM_BACKEND_FALLBACK", "")
+
+    primary_backend = _build_single_backend(primary_choice)
+
+    # Wire fallback only if it is specified and differs from the primary.
+    if fallback_choice and fallback_choice != primary_choice:
+        from resume_pipeline.pipeline.fallback_backend import FallbackLLMBackend
+        fallback_backend = _build_single_backend(fallback_choice)
+        return FallbackLLMBackend(primary=primary_backend, fallback=fallback_backend)
+
+    return primary_backend
 
 
 # ---------------------------------------------------------------------------
@@ -404,7 +452,11 @@ class RubricEvaluator:
         user_prompt = _build_user_prompt(resume_parsed, job_requirements)
         raw_response = self._llm.complete(system_prompt, user_prompt)
         parsed = self._parse_response(raw_response)
-        return self._score(parsed)
+        result = self._score(parsed)
+        # Propagate fallback flag: FallbackLLMBackend exposes used_fallback;
+        # all other backends don't have the attribute (defaults to False).
+        result.is_evaluated_via_fallback = getattr(self._llm, "used_fallback", False)
+        return result
 
     # -- Internal helpers -------------------------------------------------------
 

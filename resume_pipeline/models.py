@@ -306,6 +306,18 @@ class RubricScore(models.Model):
     # LLM model used for evaluation.
     model_name = models.CharField(max_length=100)
 
+    # LLM resilience audit trail — True when the primary provider failed and
+    # the evaluation was completed by a fallback provider.  Surfaced in the
+    # score-card API response so the reviewer UI can display a visual alert
+    # (e.g., "⚠ Evaluated by backup model — manual review recommended").
+    is_evaluated_via_fallback = models.BooleanField(
+        default=False,
+        help_text=(
+            "True when the primary LLM provider was unavailable and a fallback "
+            "provider completed this rubric evaluation."
+        ),
+    )
+
     evaluated_at = models.DateTimeField(auto_now_add=True)
     latency_ms = models.FloatField()
 
