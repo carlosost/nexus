@@ -32,7 +32,7 @@ from typing import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
-from pytest_bdd import given, parsers, then, when
+from pytest_bdd import given, parsers, scenarios, then, when
 
 from resume_pipeline.ingestion.parser import (
     ParsedDocument,
@@ -45,6 +45,10 @@ from resume_pipeline.ingestion.backends.pdfplumber_backend import PdfplumberBack
 from resume_pipeline.ingestion.section_detector import SectionDetector
 from resume_pipeline.logging_module import audit_logger
 from resume_pipeline.observability import PipelineObservability
+
+pytestmark = pytest.mark.bdd
+
+scenarios("document_ingestion.feature")
 
 
 # ---------------------------------------------------------------------------
@@ -202,12 +206,12 @@ def resume_text_from_section_table(ctx: dict, datatable) -> None:
 
     ctx["text"] and ctx["section_table"] are populated for Then steps.
     """
-    header_row = datatable.rows[0]
+    header_row = datatable[0]
     col = {name: idx for idx, name in enumerate(header_row)}
 
     entries = []
     text_parts = []
-    for row in datatable.rows[1:]:
+    for row in datatable[1:]:
         entry = {
             "header_text": row[col["header_text"]],
             "canonical_key": row[col["canonical_key"]],
@@ -371,7 +375,7 @@ def assert_section_key(ctx: dict, key: str) -> None:
 
 @then("the detected sections are empty")
 def assert_sections_empty(ctx: dict) -> None:
-    sections: dict = ctx.get("sections") or ctx["result"].sections
+    sections: dict = ctx["sections"] if "sections" in ctx else ctx["result"].sections
     assert sections == {}, f"Expected empty sections, got {sections}"
 
 
@@ -381,9 +385,9 @@ def assert_sections_empty(ctx: dict) -> None:
 
 @then("no exception is raised")
 def assert_no_exception(ctx: dict) -> None:
-    # If the When step (parse_document) had raised, pytest-bdd would have
-    # already failed before reaching this step. Body is intentionally a no-op.
-    assert ctx.get("result") is not None
+    # If the When step raised, pytest-bdd would have already failed before here.
+    # Supports both parse_document (sets "result") and detect_sections (sets "sections").
+    assert ctx.get("result") is not None or "sections" in ctx
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ import math
 from typing import Any
 
 import pytest
-from pytest_bdd import given, parsers, then, when
+from pytest_bdd import given, parsers, scenarios, then, when
 
 from unittest.mock import MagicMock
 
@@ -29,6 +29,10 @@ from resume_pipeline.pipeline.rubric_score import (
     make_rubric_backend,
 )
 from resume_pipeline.pipeline.rubric_protocol import RubricEvaluatorProtocol, RubricResult
+
+pytestmark = pytest.mark.bdd
+
+scenarios("rubric_score.feature")
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +91,7 @@ def llm_all_scores(ctx: dict, score: float) -> None:
 
 @given("the LLM returns rubric scores:")
 def llm_mixed_scores(ctx: dict, datatable) -> None:
-    rows = datatable.rows
+    rows = datatable[1:]  # datatable[0] is the header row
     scores = {row[0]: float(row[1]) for row in rows}
     response = build_llm_response(
         scores=scores,

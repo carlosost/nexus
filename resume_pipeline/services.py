@@ -19,6 +19,7 @@ from rest_framework.exceptions import ValidationError
 
 from resume_pipeline.embeddings import EmbeddingClient, MockEmbeddingBackend
 from resume_pipeline.logging_module import audit_logger
+from resume_pipeline.observability import pipeline_observability
 from resume_pipeline.models import (
     Application,
     FinalScore,
@@ -54,6 +55,12 @@ class PipelineService:
         self._embedding_client = embedding_client or EmbeddingClient(
             backend=MockEmbeddingBackend(dim=1536)
         )
+        backend = getattr(self._embedding_client, "_backend", None)
+        audit_logger.log_pipeline_service_init(
+            orchestrator_type=type(self._orchestrator).__name__,
+            embedding_backend_type=type(backend).__name__ if backend else "unknown",
+            embedding_dim=getattr(backend, "_dim", None),
+        )
 
     def run(self, application: Application) -> dict:
         """
@@ -61,22 +68,38 @@ class PipelineService:
 
         Returns a summary dict suitable for serialising directly in an API response.
         """
+        application_id = str(application.id)
         candidate = application.candidate
         job = application.job
 
-        candidate_embeddings = {
-            s: self._embedding_client.embed(str(candidate.resume_parsed[s]))
-            for s in _SECTIONS
-            if candidate.resume_parsed.get(s)
-        }
-        job_embeddings = {
-            s: self._embedding_client.embed(str(job.requirements_raw.get(s, job.description)))
-            for s in _SECTIONS
-            if job.requirements_raw.get(s) or job.description
-        }
+        audit_logger.log_pipeline_started(
+            application_id=application_id,
+            job_id=str(application.job_id),
+            candidate_id=str(application.candidate_id),
+        )
+
+        with pipeline_observability.timed("pipeline_embedding_build", application_id=application_id):
+            candidate_embeddings = {
+                s: self._embedding_client.embed(str(candidate.resume_parsed[s]))
+                for s in _SECTIONS
+                if candidate.resume_parsed.get(s)
+            }
+            job_embeddings = {
+                s: self._embedding_client.embed(str(job.requirements_raw.get(s, job.description)))
+                for s in _SECTIONS
+                if job.requirements_raw.get(s) or job.description
+            }
+
+        first_vec = next(iter(candidate_embeddings.values()), None)
+        audit_logger.log_pipeline_embeddings_built(
+            application_id=application_id,
+            candidate_sections=list(candidate_embeddings.keys()),
+            job_sections=list(job_embeddings.keys()),
+            embedding_dim=len(first_vec) if first_vec is not None else 0,
+        )
 
         pipeline_input = PipelineInput(
-            application_id=str(application.id),
+            application_id=application_id,
             job_must_haves=job.must_haves,
             resume_parsed=candidate.resume_parsed,
             candidate_embeddings=candidate_embeddings,
@@ -86,11 +109,72 @@ class PipelineService:
             job_requirements=job.requirements_raw,
         )
 
-        result = self._orchestrator.run(pipeline_input)
-        self._persist(application, result)
+        with pipeline_observability.timed("pipeline_orchestrator_run", application_id=application_id):
+            result = self._orchestrator.run(pipeline_input)
+
+        audit_logger.log_pipeline_gate_result(
+            application_id=application_id,
+            gate_outcome=result.gate_outcome.value,
+            gate_passed=result.gate_passed,
+            criterion_results=[
+                {"name": cr.name, "outcome": cr.outcome.value, "evidence": cr.evidence}
+                for cr in result.gate_criterion_results
+            ],
+        )
+
+        if result.gate_passed:
+            audit_logger.log_pipeline_semantic_result(
+                application_id=application_id,
+                semantic_score=result.semantic_score,
+                section_scores=result.semantic_section_scores or {},
+            )
+            audit_logger.log_pipeline_rubric_result(
+                application_id=application_id,
+                rubric_score=result.rubric_score,
+                criterion_scores=result.rubric_criterion_scores or {},
+                evidence_quality=result.evidence_quality,
+            )
+
+        if not result.gate_passed:
+            audit_logger.log_pipeline_short_circuited(
+                application_id=application_id,
+                gate_outcome=result.gate_outcome.value,
+                reason="Hard gate criteria not met",
+            )
+
+        audit_logger.log_score_computed(
+            application_id=application_id,
+            final_score=result.final_score,
+            gate_passed=result.gate_passed,
+            semantic_match=result.semantic_score,
+            rubric_score_norm=result.rubric_score,
+            evidence_quality=result.evidence_quality,
+            confidence=result.confidence,
+            model_name=os.environ.get("LLM_BACKEND", "mock"),
+        )
+
+        with pipeline_observability.timed("pipeline_persist", application_id=application_id):
+            self._persist(application, result)
+
+        audit_logger.log_pipeline_persisted(
+            application_id=application_id,
+            gate_outcome=result.gate_outcome.value,
+            gate_passed=result.gate_passed,
+            stages_persisted=result.stages_executed,
+            new_status=str(application.status),
+        )
+
+        audit_logger.log_pipeline_completed(
+            application_id=application_id,
+            gate_outcome=result.gate_outcome.value,
+            gate_passed=result.gate_passed,
+            final_score=result.final_score,
+            stages_executed=result.stages_executed,
+            latency_ms=result.total_latency_ms,
+        )
 
         return {
-            "application_id": str(application.id),
+            "application_id": application_id,
             "gate_outcome": result.gate_outcome.value,
             "gate_passed": result.gate_passed,
             "gate_criterion_results": [

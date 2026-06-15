@@ -43,10 +43,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from typing import Protocol, Union, runtime_checkable
 
 from pydantic import BaseModel, Field, model_validator
 
+from resume_pipeline.logging_module import audit_logger
+from resume_pipeline.observability import pipeline_observability
 from resume_pipeline.pipeline.rubric_protocol import RubricEvaluatorProtocol, RubricResult
 
 
@@ -450,12 +453,35 @@ class RubricEvaluator:
         """
         system_prompt = _RUBRIC_SYSTEM_PROMPT
         user_prompt = _build_user_prompt(resume_parsed, job_requirements)
-        raw_response = self._llm.complete(system_prompt, user_prompt)
+
+        audit_logger.log_rubric_llm_call_started(
+            model_name=self._llm.model_name,
+            system_prompt_len=len(system_prompt),
+            user_prompt_len=len(user_prompt),
+            resume_sections=list(resume_parsed.keys()),
+            job_requirement_keys=list(job_requirements.keys()),
+        )
+
+        with pipeline_observability.timed("rubric_llm_call"):
+            t0 = time.perf_counter()
+            raw_response = self._llm.complete(system_prompt, user_prompt)
+            llm_latency_ms = (time.perf_counter() - t0) * 1000
+
+        used_fallback = getattr(self._llm, "used_fallback", False)
+        response_type = "structured" if isinstance(raw_response, RubricScoreResponse) else "string"
+        response_len = None if response_type == "structured" else len(str(raw_response))
+
+        audit_logger.log_rubric_llm_call_finished(
+            model_name=self._llm.model_name,
+            response_type=response_type,
+            response_len=response_len,
+            latency_ms=round(llm_latency_ms, 3),
+            used_fallback=used_fallback,
+        )
+
         parsed = self._parse_response(raw_response)
         result = self._score(parsed)
-        # Propagate fallback flag: FallbackLLMBackend exposes used_fallback;
-        # all other backends don't have the attribute (defaults to False).
-        result.is_evaluated_via_fallback = getattr(self._llm, "used_fallback", False)
+        result.is_evaluated_via_fallback = used_fallback
         return result
 
     # -- Internal helpers -------------------------------------------------------
@@ -472,29 +498,50 @@ class RubricEvaluator:
         """
         # Real backends (instructor) return a validated Pydantic object directly.
         if isinstance(raw, RubricScoreResponse):
-            return {
-                "scores": dict(raw.scores),
-                "justifications": dict(raw.justifications),
-            }
+            result = {"scores": dict(raw.scores), "justifications": dict(raw.justifications)}
+            audit_logger.log_rubric_response_parsed(
+                parse_path="structured_object",
+                had_markdown_fence=False,
+                criteria_found=list(raw.scores.keys()),
+                is_fallback=False,
+            )
+            return result
 
         text = raw.strip()
         if not text:
+            audit_logger.log_rubric_response_parsed(
+                parse_path="fallback_empty",
+                had_markdown_fence=False,
+                criteria_found=[],
+                is_fallback=True,
+            )
             return self._fallback_parsed()
 
         # Strip markdown code fences (```json ... ``` or ``` ... ```)
-        text = re.sub(r"^```[a-z]*\n?", "", text, flags=re.IGNORECASE)
-        text = re.sub(r"\n?```$", "", text)
-        text = text.strip()
+        stripped = re.sub(r"^```[a-z]*\n?", "", text, flags=re.IGNORECASE)
+        stripped = re.sub(r"\n?```$", "", stripped).strip()
+        had_fence = stripped != text
 
         try:
-            data = json.loads(text)
-            # Ensure both keys exist at the top level.
+            data = json.loads(stripped)
             if "scores" not in data:
                 data["scores"] = {}
             if "justifications" not in data:
                 data["justifications"] = {}
+            audit_logger.log_rubric_response_parsed(
+                parse_path="json_string",
+                had_markdown_fence=had_fence,
+                criteria_found=list(data["scores"].keys()),
+                is_fallback=False,
+            )
             return data
         except (json.JSONDecodeError, ValueError):
+            audit_logger.log_rubric_response_parsed(
+                parse_path="fallback_parse_error",
+                had_markdown_fence=had_fence,
+                criteria_found=[],
+                is_fallback=True,
+            )
             return self._fallback_parsed()
 
     def _score(self, parsed: dict) -> RubricResult:
@@ -508,26 +555,38 @@ class RubricEvaluator:
         justifications: dict = parsed.get("justifications", {})
 
         # Clamp each criterion's raw score to [1.0, 5.0].
+        raw_scores: dict[str, float] = {}
         criterion_scores: dict[str, float] = {}
         for criterion in CRITERIA:
             raw = raw_scores_input.get(criterion, FALLBACK_SCORE)
             try:
-                clamped = max(1.0, min(5.0, float(raw)))
+                raw_float = float(raw)
             except (TypeError, ValueError):
-                clamped = FALLBACK_SCORE
-            criterion_scores[criterion] = clamped
+                raw_float = FALLBACK_SCORE
+            raw_scores[criterion] = raw_float
+            criterion_scores[criterion] = max(1.0, min(5.0, raw_float))
 
         # Weighted average, normalized to [0, 1].
         weighted_sum = sum(RUBRIC_WEIGHTS[c] * criterion_scores[c] for c in CRITERIA)
         normalized_score = weighted_sum / 5.0
 
         # Evidence quality: proportion of criteria with substantive justification.
+        evidence_word_counts = {
+            c: len(justifications.get(c, "").split()) for c in CRITERIA
+        }
         substantive_count = sum(
-            1
-            for c in CRITERIA
-            if len(justifications.get(c, "").split()) >= _MIN_JUSTIFICATION_WORDS
+            1 for c in CRITERIA if evidence_word_counts[c] >= _MIN_JUSTIFICATION_WORDS
         )
         evidence_quality = substantive_count / len(CRITERIA)
+
+        audit_logger.log_rubric_scored(
+            raw_scores=raw_scores,
+            clamped_scores=criterion_scores,
+            weighted_sum=weighted_sum,
+            normalized_score=normalized_score,
+            evidence_per_criterion=evidence_word_counts,
+            evidence_quality=evidence_quality,
+        )
 
         return RubricResult(
             normalized_score=normalized_score,

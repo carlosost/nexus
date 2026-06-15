@@ -23,7 +23,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from pytest_bdd import given, then, when
+from pytest_bdd import given, parsers, scenarios, then, when
 
 from resume_pipeline.management.commands._seed_data import (
     CANDIDATES_BY_EMAIL,
@@ -31,6 +31,10 @@ from resume_pipeline.management.commands._seed_data import (
     JOB_SPEC,
 )
 from resume_pipeline.pipeline.hard_gate import GateOutcome, HardGateEvaluator
+
+pytestmark = pytest.mark.bdd
+
+scenarios("database_seeding.feature")
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +176,7 @@ def job_spec_has_keyword_presence(ctx: dict) -> None:
 # Gate outcome steps (no DB)
 # ---------------------------------------------------------------------------
 
-@when('the hard gate evaluates candidate "{email}"')
+@when(parsers.parse('the hard gate evaluates candidate "{email}"'))
 def hard_gate_evaluates_candidate(ctx: dict, email: str) -> None:
     evaluator = HardGateEvaluator()
     spec = CANDIDATES_BY_EMAIL[email]
@@ -183,7 +187,7 @@ def hard_gate_evaluates_candidate(ctx: dict, email: str) -> None:
     ctx["evaluated_email"] = email
 
 
-@then('the gate outcome is "{expected}"')
+@then(parsers.parse('the gate outcome is "{expected}"'))
 def assert_gate_outcome(ctx: dict, expected: str) -> None:
     actual = ctx["gate_evaluation"].outcome
     expected_enum = GateOutcome(expected)
@@ -197,7 +201,7 @@ def assert_gate_outcome(ctx: dict, expected: str) -> None:
     )
 
 
-@then('the years_experience criterion outcome is "{expected}"')
+@then(parsers.parse('the years_experience criterion outcome is "{expected}"'))
 def assert_years_experience_criterion(ctx: dict, expected: str) -> None:
     evaluation = ctx["gate_evaluation"]
     result = next(
@@ -242,7 +246,7 @@ def seed_demo_runs(ctx: dict) -> None:
 # Idempotency assertion steps
 # ---------------------------------------------------------------------------
 
-@then('Job.objects.get_or_create was called with title "{expected_title}"')
+@then(parsers.parse('Job.objects.get_or_create was called with title "{expected_title}"'))
 def assert_job_get_or_create_title(ctx: dict, expected_title: str) -> None:
     mgr = ctx["mock_job_mgr"]
     mgr.get_or_create.assert_called_once()

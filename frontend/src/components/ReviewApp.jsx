@@ -12,6 +12,7 @@
  */
 import { useState, useEffect } from 'react';
 import ScoreCard from './ScoreCard.jsx';
+import InsightPanel from './InsightPanel.jsx';
 import RubricBreakdown from './RubricBreakdown.jsx';
 import OverridePanel from './OverridePanel.jsx';
 import AuditTrail from './AuditTrail.jsx';
@@ -58,29 +59,31 @@ export default function ReviewApp({ applicationId }) {
 
   if (loading) {
     return (
-      <main className="review-app review-app--loading" aria-busy="true">
+      <div className="review-app review-app--loading" aria-busy="true">
         <p data-testid="loading-message">Loading…</p>
-      </main>
+      </div>
     );
   }
 
   if (fetchError) {
     const is404 = fetchError.status === 404;
     return (
-      <main className="review-app review-app--error">
+      <div className="review-app review-app--error">
         <p
           className="review-app__error"
           data-testid="error-message"
           role="alert"
         >
-          {is404 ? 'Application not found' : `Error: ${fetchError.message}`}
+          {is404
+            ? 'No score available yet. Run the pipeline first to generate a review.'
+            : `Error: ${fetchError.message}`}
         </p>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className="review-app" data-testid="review-app">
+    <div className="review-app" data-testid="review-app">
       <header className="review-app__header">
         <h1 className="review-app__title">Application Review</h1>
         <code className="review-app__id" data-testid="application-id">
@@ -89,6 +92,8 @@ export default function ReviewApp({ applicationId }) {
       </header>
 
       <ScoreCard score={scoreData} />
+
+      <InsightPanel score={scoreData} />
 
       <RubricBreakdown breakdown={scoreData.rubric_breakdown ?? {}} />
 
@@ -120,6 +125,6 @@ export default function ReviewApp({ applicationId }) {
       )}
 
       <AuditTrail reviews={reviews} />
-    </main>
+    </div>
   );
 }

@@ -12,7 +12,7 @@ import logging
 from unittest.mock import MagicMock, patch, wraps
 
 import pytest
-from pytest_bdd import given, parsers, then, when
+from pytest_bdd import given, parsers, scenarios, then, when
 
 from resume_pipeline.logging_module import StructuredAuditLogger
 from resume_pipeline.observability import PipelineObservability
@@ -20,6 +20,10 @@ from resume_pipeline.pipeline.hard_gate import GateOutcome, HardGateEvaluator
 from resume_pipeline.pipeline.orchestrator import PipelineInput, PipelineOrchestrator
 from resume_pipeline.pipeline.rubric_protocol import RubricResult, StubRubricEvaluator
 from resume_pipeline.pipeline.semantic_match import SemanticMatchEvaluator, SemanticMatchScore
+
+pytestmark = pytest.mark.bdd
+
+scenarios("pipeline_orchestration.feature")
 
 
 # ---------------------------------------------------------------------------

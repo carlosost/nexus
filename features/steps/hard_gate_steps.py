@@ -13,7 +13,7 @@ Parsing conventions for the simplified table format used in the feature file:
 from __future__ import annotations
 
 import pytest
-from pytest_bdd import given, parsers, scenario, then, when
+from pytest_bdd import given, parsers, scenario, scenarios, then, when
 
 from resume_pipeline.pipeline.final_score import FinalScoreCalculator
 from resume_pipeline.pipeline.hard_gate import (
@@ -22,16 +22,9 @@ from resume_pipeline.pipeline.hard_gate import (
     HardGateEvaluator,
 )
 
+pytestmark = pytest.mark.bdd
 
-# ---------------------------------------------------------------------------
-# Scenario binding (tie each scenario title to the feature file)
-# ---------------------------------------------------------------------------
-
-# Uncomment to bind scenarios explicitly; alternatively use pytest-bdd's
-# `scenarios("hard_gate.feature")` in conftest.py for bulk binding.
-#
-# @scenario("../hard_gate.feature", "Candidate satisfies a single years-of-experience criterion")
-# def test_pass_single_exp(): ...
+scenarios("hard_gate.feature")
 
 
 # ---------------------------------------------------------------------------
@@ -59,15 +52,9 @@ def init_evaluator() -> dict:
 # Given — job criteria
 # ---------------------------------------------------------------------------
 
-@given(parsers.parse("a job has must-have criteria:\n{raw_table}"))
-def job_must_have_criteria(ctx: dict, raw_table: str) -> None:
-    """
-    Parses the simplified Gherkin table into a must_haves dict.
-
-    Table columns (any subset):
-        criterion, type, minimum_years, keywords, sections, required
-    """
-    rows = _parse_table(raw_table)
+@given("a job has must-have criteria:")
+def job_must_have_criteria(ctx: dict, datatable) -> None:
+    rows = _datatable_to_dicts(datatable)
     must_haves: dict = {}
 
     for row in rows:
@@ -93,10 +80,9 @@ def job_must_have_criteria(ctx: dict, raw_table: str) -> None:
 # Given — candidate resume
 # ---------------------------------------------------------------------------
 
-@given(parsers.parse("a candidate resume has these fields:\n{raw_table}"))
-def candidate_resume_fields(ctx: dict, raw_table: str) -> None:
-    """Parses a two-column table (field | value) into the resume_parsed dict."""
-    rows = _parse_table(raw_table)
+@given("a candidate resume has these fields:")
+def candidate_resume_fields(ctx: dict, datatable) -> None:
+    rows = _datatable_to_dicts(datatable)
     resume_parsed: dict = {}
 
     for row in rows:
@@ -205,6 +191,14 @@ def assert_final_score(ctx: dict, expected: float) -> None:
 # ---------------------------------------------------------------------------
 # Table parser utility
 # ---------------------------------------------------------------------------
+
+def _datatable_to_dicts(datatable) -> list[dict[str, str]]:
+    """Convert pytest-bdd 8 datatable (list[list[str]]) to list of dicts."""
+    if not datatable:
+        return []
+    headers = datatable[0]
+    return [dict(zip(headers, row)) for row in datatable[1:]]
+
 
 def _parse_table(raw: str) -> list[dict[str, str]]:
     """

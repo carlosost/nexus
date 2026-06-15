@@ -44,6 +44,8 @@ from resume_pipeline.pipeline.rubric_score import (
     make_rubric_backend,
 )
 
+pytestmark = pytest.mark.bdd
+
 scenarios("llm_fallback.feature")
 
 
@@ -215,6 +217,10 @@ def fallback_anthropic_fails(ctx: dict) -> None:
 
 @given("a FallbackLLMBackend is wired with OpenAI as primary and Anthropic as fallback")
 def wire_fallback_backend(ctx: dict) -> None:
+    if "fallback_backend" not in ctx:
+        default = _make_anthropic_backend(model="claude-haiku-4-5-20251001")
+        default.complete = MagicMock(return_value=_valid_rubric_response(score=3))
+        ctx["fallback_backend"] = default
     ctx["fallback_llm_backend"] = FallbackLLMBackend(
         primary=ctx["primary_backend"],
         fallback=ctx["fallback_backend"],

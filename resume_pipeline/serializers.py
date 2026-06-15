@@ -1,10 +1,20 @@
 """
-DRF Serializers for the Human-in-the-Loop API.
+DRF Serializers for the Resume Pipeline API.
 
 Serializer responsibilities:
-  - HumanReviewSerializer: validates input, enforces override_reason constraint.
-  - ApplicationScoreSerializer: read-only score card for the reviewer UI.
-  - RubricBreakdownSerializer: per-competency scores nested in the score card.
+  Dashboard / list views (read-only):
+    - ApplicationListSerializer  — table row: candidate, job, status, score
+    - JobListSerializer          — dropdown option: id + title
+    - CandidateListSerializer    — dropdown option: id + name + email
+
+  Creation forms (write):
+    - ApplicationCreateSerializer — links an existing Job to an existing Candidate
+    - CandidateCreateSerializer   — creates a Candidate from name + email + PDF upload
+
+  Review workflow:
+    - HumanReviewSerializer      — validates override decision + reason
+    - ApplicationScoreSerializer — read-only score card for the reviewer UI
+    - RubricBreakdownSerializer  — per-competency scores nested in score card
 
 Override reason enforcement rule (encoded as a serializer-level validator):
   Decision in {override_pass, override_fail} → override_reason must be
@@ -16,7 +26,208 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
-from resume_pipeline.models import FinalScore, HumanReview, RubricScore
+from resume_pipeline.models import Application, Candidate, FinalScore, HumanReview, Job, RubricScore
+
+
+# ---------------------------------------------------------------------------
+# Job — list + create
+# ---------------------------------------------------------------------------
+
+class JobListSerializer(serializers.ModelSerializer):
+    """Lightweight read-only projection for dropdown and table use."""
+
+    class Meta:
+        model = Job
+        fields = "__all__"
+
+
+class JobDetailSerializer(serializers.ModelSerializer):
+    """
+    Full projection returned by GET /api/jobs/<id>/.
+    Also accepts PATCH payloads — all fields are optional on update.
+    """
+
+    class Meta:
+        model = Job
+        fields = "__all__"
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class JobMarkdownInputSerializer(serializers.Serializer):
+    """
+    Accepts a raw Markdown string for the POST /api/jobs/ endpoint.
+    Validation is limited to presence/non-blank; structural parsing is handled
+    by parse_job_markdown() in the view so field-level errors can be returned.
+    """
+    raw_markdown = serializers.CharField(
+        min_length=1,
+        error_messages={"min_length": "raw_markdown must not be blank."},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Candidate — list + create
+# ---------------------------------------------------------------------------
+
+class CandidateListSerializer(serializers.ModelSerializer):
+    """Lightweight read-only projection for dropdown and table use."""
+
+    class Meta:
+        model = Candidate
+        fields = ["id", "name", "email", "created_at"]
+
+
+class CandidateDetailSerializer(serializers.ModelSerializer):
+    """
+    Full projection returned by GET /api/candidates/<id>/.
+    PATCH accepts name and email only — resume_parsed is immutable after ingestion.
+    """
+
+    class Meta:
+        model = Candidate
+        fields = ["id", "name", "email", "resume_parsed", "created_at"]
+        read_only_fields = ["id", "resume_parsed", "created_at"]
+
+    def validate_email(self, value: str) -> str:
+        """On update, allow keeping the same email but reject duplicates on other records."""
+        qs = Candidate.objects.filter(email=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(
+                "A candidate with this email address already exists."
+            )
+        return value
+
+
+class CandidateCreateSerializer(serializers.Serializer):
+    """
+    Creates a Candidate from a PDF resume upload.
+
+    The PDF is parsed by ResumeParser (pymupdf primary / pdfplumber fallback)
+    and the resulting section dict is stored in resume_parsed.  Raw text is
+    stored in resume_raw for audit / reprocessing purposes.
+
+    Accepts multipart/form-data:
+        name        string   — candidate's full name
+        email       string   — unique contact email
+        resume_pdf  file     — PDF resume (validated: content_type, max 10 MB)
+    """
+    name       = serializers.CharField(max_length=255)
+    email      = serializers.EmailField()
+    resume_pdf = serializers.FileField()
+
+    def validate_resume_pdf(self, file):
+        allowed = {"application/pdf", "application/x-pdf"}
+        ct = getattr(file, "content_type", "")
+        if ct not in allowed and not file.name.lower().endswith(".pdf"):
+            raise serializers.ValidationError("Only PDF files are accepted.")
+        if file.size > 10 * 1024 * 1024:  # 10 MB
+            raise serializers.ValidationError("Resume PDF must be smaller than 10 MB.")
+        return file
+
+    def validate_email(self, value: str) -> str:
+        if Candidate.objects.filter(email=value).exists():
+            raise serializers.ValidationError(
+                "A candidate with this email address already exists."
+            )
+        return value
+
+    def create(self, validated_data: dict) -> Candidate:
+        from resume_pipeline.ingestion.parser import ResumeParser
+
+        pdf_file = validated_data["resume_pdf"]
+        pdf_bytes = pdf_file.read()
+
+        # Parse: extract raw text + section dict
+        parser = ResumeParser()
+        try:
+            parsed = parser.parse(pdf_bytes)
+        except Exception:
+            # Graceful degradation: store raw bytes as text, empty sections
+            parsed = {}
+
+        raw_text = parsed.pop("_raw_text", "") or ""
+
+        return Candidate.objects.create(
+            name=validated_data["name"],
+            email=validated_data["email"],
+            resume_raw=raw_text,
+            resume_parsed=parsed,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Application — list + create
+# ---------------------------------------------------------------------------
+
+class ApplicationListSerializer(serializers.ModelSerializer):
+    """
+    Table-row projection returned by GET /api/applications/.
+
+    Includes denormalized candidate / job fields so the dashboard table
+    never requires N+1 requests to show name and job title.
+    """
+    candidate_name  = serializers.CharField(source="candidate.name",  read_only=True)
+    candidate_email = serializers.CharField(source="candidate.email", read_only=True)
+    job_title       = serializers.CharField(source="job.title",       read_only=True)
+    final_score     = serializers.SerializerMethodField()
+    is_evaluated_via_fallback = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = Application
+        fields = [
+            "id",
+            "candidate_name",
+            "candidate_email",
+            "job_title",
+            "status",
+            "final_score",
+            "is_evaluated_via_fallback",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_final_score(self, obj: Application) -> float | None:
+        try:
+            return obj.final_score.score
+        except Exception:
+            return None
+
+    def get_is_evaluated_via_fallback(self, obj: Application) -> bool:
+        try:
+            return obj.rubric_score.is_evaluated_via_fallback
+        except Exception:
+            return False
+
+
+class ApplicationCreateSerializer(serializers.Serializer):
+    """
+    Links an existing Job to an existing Candidate, creating an Application.
+
+    Uses get_or_create so re-submitting the same pair is idempotent (returns
+    the existing record with HTTP 200 rather than a 409 conflict).
+    """
+    job_id       = serializers.UUIDField()
+    candidate_id = serializers.UUIDField()
+
+    def validate(self, data: dict) -> dict:
+        try:
+            data["job"] = Job.objects.get(pk=data["job_id"])
+        except Job.DoesNotExist:
+            raise serializers.ValidationError({"job_id": "Job not found."})
+        try:
+            data["candidate"] = Candidate.objects.get(pk=data["candidate_id"])
+        except Candidate.DoesNotExist:
+            raise serializers.ValidationError({"candidate_id": "Candidate not found."})
+        return data
+
+    def create(self, validated_data: dict) -> tuple[Application, bool]:
+        app, created = Application.objects.get_or_create(
+            job=validated_data["job"],
+            candidate=validated_data["candidate"],
+        )
+        return app, created
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +261,7 @@ class ApplicationScoreSerializer(serializers.Serializer):
     All fields are read-only — the score card is a view, not an input form.
     """
     application_id = serializers.UUIDField(read_only=True, source="application.id")
-    final_score = serializers.FloatField(read_only=True)
+    final_score = serializers.FloatField(read_only=True, source="score")
     confidence = serializers.FloatField(read_only=True, allow_null=True)
     gate_passed = serializers.BooleanField(read_only=True)
     gate_outcome = serializers.SerializerMethodField(read_only=True)

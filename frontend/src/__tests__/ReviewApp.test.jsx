@@ -1,14 +1,15 @@
 /**
- * Integration tests for ReviewApp — the root component.
+ * Integration tests for ReviewApp — migrated from Jest to Vitest.
  * Tests fetch behaviour, error states, and successful submission flow.
  */
+import { vi, describe, test, beforeEach, expect } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ReviewApp from '../components/ReviewApp.jsx';
 
-jest.mock('../api/client.js', () => ({
-  fetchScore: jest.fn(),
-  submitReview: jest.fn(),
+vi.mock('../api/client.js', () => ({
+  fetchScore:   vi.fn(),
+  submitReview: vi.fn(),
 }));
 import { fetchScore, submitReview } from '../api/client.js';
 
@@ -67,19 +68,17 @@ describe('ReviewApp', () => {
   });
 
   // ── 404 error state ───────────────────────────────────────────────────────
-  test('shows "Application not found" on 404', async () => {
-    const err = new Error('HTTP 404');
-    err.status = 404;
+  test('shows pipeline-not-run message on 404', async () => {
+    const err = Object.assign(new Error('HTTP 404'), { status: 404 });
     fetchScore.mockRejectedValue(err);
     render(<ReviewApp applicationId="app-999" />);
     await waitFor(() =>
-      expect(screen.getByTestId('error-message')).toHaveTextContent('Application not found')
+      expect(screen.getByTestId('error-message')).toHaveTextContent('No score available yet')
     );
   });
 
   test('shows generic error on non-404 failure', async () => {
-    const err = new Error('HTTP 500');
-    err.status = 500;
+    const err = Object.assign(new Error('HTTP 500'), { status: 500 });
     fetchScore.mockRejectedValue(err);
     render(<ReviewApp applicationId="app-001" />);
     await waitFor(() =>
@@ -107,8 +106,7 @@ describe('ReviewApp', () => {
   // ── Submit error ──────────────────────────────────────────────────────────
   test('shows "Submission failed" on API error', async () => {
     fetchScore.mockResolvedValue(SCORE_DATA);
-    const apiErr = new Error('HTTP 500');
-    apiErr.status = 500;
+    const apiErr = Object.assign(new Error('HTTP 500'), { status: 500 });
     submitReview.mockRejectedValue(apiErr);
 
     render(<ReviewApp applicationId="app-001" />);
@@ -120,18 +118,15 @@ describe('ReviewApp', () => {
     await waitFor(() =>
       expect(screen.getByTestId('submit-error-message')).toHaveTextContent('Submission failed')
     );
-    // Form remains visible so user can retry.
     expect(screen.getByTestId('review-form')).toBeInTheDocument();
   });
 
-  // ── fetchScore called with correct ID ─────────────────────────────────────
   test('fetches score using the provided applicationId', async () => {
     fetchScore.mockResolvedValue(SCORE_DATA);
     render(<ReviewApp applicationId="app-001" />);
     await waitFor(() => expect(fetchScore).toHaveBeenCalledWith('app-001'));
   });
 
-  // ── No application ID ─────────────────────────────────────────────────────
   test('shows error when applicationId is null', async () => {
     render(<ReviewApp applicationId={null} />);
     await waitFor(() =>

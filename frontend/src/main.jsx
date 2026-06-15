@@ -1,45 +1,41 @@
-import { StrictMode, useState } from 'react';
+/**
+ * Application entry point — lightweight client-side router.
+ *
+ * Routes:
+ *   /                    → Dashboard  (read-only application inventory)
+ *   /settings            → Settings   (Jobs / Candidates / Applications admin)
+ *   /review/:id          → ReviewApp  (human-in-the-loop score review)
+ *
+ * No external router library required — path matching covers the three
+ * distinct views the application currently needs.
+ */
+
+import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import Dashboard from './components/Dashboard.jsx';
+import Settings  from './components/Settings.jsx';
 import ReviewApp from './components/ReviewApp.jsx';
+import './styles/dashboard.css';
 
-// Application ID is read from the URL: /review/:applicationId
-const pathParts = window.location.pathname.split('/').filter(Boolean);
-const applicationId = pathParts[pathParts.indexOf('review') + 1] || null;
+function Router() {
+  const parts = window.location.pathname.split('/').filter(Boolean);
 
-function Root() {
-  const [input, setInput] = useState('');
-
-  if (applicationId) {
-    return <ReviewApp applicationId={applicationId} />;
+  // /settings
+  if (parts[0] === 'settings') {
+    return <Settings />;
   }
 
-  function handleSubmit(e) {
-    e.preventDefault();
-    const uuid = input.trim();
-    if (uuid) window.location.href = `/review/${uuid}`;
+  // /review/:applicationId
+  if (parts[0] === 'review' && parts[1]) {
+    return <ReviewApp applicationId={parts[1]} />;
   }
 
-  return (
-    <main style={{ fontFamily: 'sans-serif', maxWidth: 480, margin: '80px auto', padding: '0 16px' }}>
-      <h1>Resume Review</h1>
-      <p>Enter an application UUID to open its review page.</p>
-      <form onSubmit={handleSubmit} style={{ display: 'flex', gap: 8 }}>
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-          style={{ flex: 1, padding: '8px 12px', fontSize: 14, fontFamily: 'monospace' }}
-          autoFocus
-        />
-        <button type="submit" style={{ padding: '8px 16px' }}>Open</button>
-      </form>
-    </main>
-  );
+  // / or anything else → Dashboard
+  return <Dashboard />;
 }
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <Root />
+    <Router />
   </StrictMode>
 );

@@ -17,10 +17,17 @@ const CRITERION_LABELS = {
 
 const MAX_SCORE = 5;
 
+function barColor(pct) {
+  if (pct >= 80) return 'var(--color-success)';
+  if (pct >= 60) return 'var(--color-warning)';
+  return 'var(--color-danger)';
+}
+
 export default function RubricBreakdown({ breakdown }) {
   if (!breakdown || Object.keys(breakdown).length === 0) {
     return (
       <section className="rubric-breakdown" aria-label="Rubric breakdown">
+        <h2 className="rubric-breakdown__title">Rubric Breakdown</h2>
         <p className="rubric-breakdown__empty">No rubric data available.</p>
       </section>
     );
@@ -35,25 +42,30 @@ export default function RubricBreakdown({ breakdown }) {
           const label = CRITERION_LABELS[criterion] ?? criterion;
           return (
             <li key={criterion} className="rubric-breakdown__item">
-              <span
-                className="rubric-breakdown__label"
-                data-testid={`criterion-label-${criterion}`}
-              >
-                {label}
-              </span>
+              <div className="rubric-breakdown__row">
+                <span
+                  className="rubric-breakdown__label"
+                  data-testid={`criterion-label-${criterion}`}
+                >
+                  {label}
+                </span>
+                <span
+                  className="rubric-breakdown__score"
+                  data-testid={`criterion-score-${criterion}`}
+                >
+                  {rawScore.toFixed(1)} / {MAX_SCORE}
+                </span>
+              </div>
               <div className="rubric-breakdown__bar-track" aria-hidden="true">
                 <div
                   className="rubric-breakdown__bar-fill"
                   data-testid={`criterion-bar-${criterion}`}
-                  style={{ width: `${pct}%` }}
+                  style={{
+                    width: `${pct}%`,
+                    background: barColor(pct),
+                  }}
                 />
               </div>
-              <span
-                className="rubric-breakdown__score"
-                data-testid={`criterion-score-${criterion}`}
-              >
-                {rawScore.toFixed(1)}
-              </span>
             </li>
           );
         })}

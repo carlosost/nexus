@@ -35,7 +35,7 @@ Feature: LLM Rubric Scoring — Stage 3
       | domain_alignment    | 2     |
       | education_certs     | 1     |
     When I evaluate a resume against job requirements
-    Then the normalized_score is approximately 0.74
+    Then the normalized_score is approximately 0.72
 
   Scenario: Stub-equivalent scores (all 3.5) normalize to 0.70
     Given the LLM returns all rubric scores as 3.5

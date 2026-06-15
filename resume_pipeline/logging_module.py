@@ -51,6 +51,33 @@ class AuditEventType(str, Enum):
     FALLBACK_LLM_ENGAGED = "fallback_llm_engaged"
     FALLBACK_LLM_SUCCEEDED = "fallback_llm_succeeded"
     FALLBACK_LLM_EXHAUSTED = "fallback_llm_exhausted"
+    # Job ingestion events
+    JOB_CREATE_STARTED = "job_create_started"
+    JOB_CREATED = "job_created"
+    JOB_CREATE_FAILED = "job_create_failed"
+    # Candidate ingestion events
+    CANDIDATE_CREATE_STARTED = "candidate_create_started"
+    CANDIDATE_CREATED = "candidate_created"
+    CANDIDATE_CREATE_FAILED = "candidate_create_failed"
+    # Application lifecycle events
+    APPLICATION_CREATE_STARTED = "application_create_started"
+    APPLICATION_CREATED = "application_created"
+    APPLICATION_ALREADY_EXISTS = "application_already_exists"
+    APPLICATION_CREATE_FAILED = "application_create_failed"
+    # Dashboard stats events
+    DASHBOARD_STATS_FETCHED = "dashboard_stats_fetched"
+    # Pipeline internals — step-level trace events
+    PIPELINE_SERVICE_INIT     = "pipeline_service_init"
+    PIPELINE_EMBEDDINGS_BUILT = "pipeline_embeddings_built"
+    PIPELINE_GATE_RESULT      = "pipeline_gate_result"
+    PIPELINE_SEMANTIC_RESULT  = "pipeline_semantic_result"
+    PIPELINE_RUBRIC_RESULT    = "pipeline_rubric_result"
+    PIPELINE_PERSISTED        = "pipeline_persisted"
+    # RubricEvaluator internals
+    RUBRIC_LLM_CALL_STARTED  = "rubric_llm_call_started"
+    RUBRIC_LLM_CALL_FINISHED = "rubric_llm_call_finished"
+    RUBRIC_RESPONSE_PARSED   = "rubric_response_parsed"
+    RUBRIC_SCORED            = "rubric_scored"
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +107,48 @@ class StructuredAuditLogger:
         # dropped by a root logger configured at WARNING (common in test envs).
         self._logger.setLevel(level)
         self._level = level
+
+    # ------------------------------------------------------------------
+    # Pipeline lifecycle events
+    # ------------------------------------------------------------------
+
+    def log_pipeline_started(
+        self,
+        application_id: str,
+        job_id: str,
+        candidate_id: str,
+    ) -> None:
+        """Emitted at the start of a pipeline run before any stage executes."""
+        self._emit(
+            event_type=AuditEventType.PIPELINE_STARTED,
+            payload={
+                "application_id": application_id,
+                "job_id": job_id,
+                "candidate_id": candidate_id,
+            },
+        )
+
+    def log_pipeline_completed(
+        self,
+        application_id: str,
+        gate_outcome: str,
+        gate_passed: bool,
+        final_score: float,
+        stages_executed: int,
+        latency_ms: float,
+    ) -> None:
+        """Emitted after all stages finish and results are persisted."""
+        self._emit(
+            event_type=AuditEventType.PIPELINE_COMPLETED,
+            payload={
+                "application_id": application_id,
+                "gate_outcome": gate_outcome,
+                "gate_passed": gate_passed,
+                "final_score": final_score,
+                "stages_executed": stages_executed,
+                "latency_ms": latency_ms,
+            },
+        )
 
     # ------------------------------------------------------------------
     # Hard Gate events
@@ -340,6 +409,380 @@ class StructuredAuditLogger:
                 "fallback_provider": fallback_provider,
                 "error_type": error_type,
                 "error_message": error_message,
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # Job ingestion events
+    # ------------------------------------------------------------------
+
+    def log_job_create_started(self, markdown_length: int) -> None:
+        """Emitted when POST /api/jobs/ receives a valid request."""
+        self._emit(
+            event_type=AuditEventType.JOB_CREATE_STARTED,
+            payload={"markdown_length": markdown_length},
+        )
+
+    def log_job_created(self, job_id: str, title: str) -> None:
+        """Emitted after a Job row is successfully persisted."""
+        self._emit(
+            event_type=AuditEventType.JOB_CREATED,
+            payload={"job_id": job_id, "title": title},
+        )
+
+    def log_job_create_failed(
+        self,
+        reason: str,
+        *,
+        field_key: Optional[str] = None,
+        detail: Optional[str] = None,
+    ) -> None:
+        """
+        Emitted when POST /api/jobs/ cannot create the job.
+
+        Args:
+            reason: One of ``"validation_error"``, ``"parse_error"``,
+                    ``"duplicate_title"``.
+            field_key: The offending field from ``JobParseError``, if any.
+            detail: Human-readable description of the failure.
+        """
+        self._emit(
+            event_type=AuditEventType.JOB_CREATE_FAILED,
+            payload={
+                "reason":    reason,
+                "field_key": field_key,
+                "detail":    detail,
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # Candidate ingestion events
+    # ------------------------------------------------------------------
+
+    def log_candidate_create_started(self, name: str) -> None:
+        """Emitted when POST /api/candidates/ receives a valid request."""
+        self._emit(
+            event_type=AuditEventType.CANDIDATE_CREATE_STARTED,
+            payload={"name": name},
+        )
+
+    def log_candidate_created(self, candidate_id: str, name: str) -> None:
+        """Emitted after a Candidate row is successfully persisted."""
+        self._emit(
+            event_type=AuditEventType.CANDIDATE_CREATED,
+            payload={"candidate_id": candidate_id, "name": name},
+        )
+
+    def log_candidate_create_failed(
+        self,
+        reason: str,
+        *,
+        field_key: Optional[str] = None,
+        detail: Optional[str] = None,
+    ) -> None:
+        """
+        Emitted when POST /api/candidates/ cannot create the candidate.
+
+        Args:
+            reason: One of ``"validation_error"``, ``"pdf_parse_error"``,
+                    ``"duplicate_email"``.
+            field_key: The offending field, if any.
+            detail: Human-readable description of the failure.
+        """
+        self._emit(
+            event_type=AuditEventType.CANDIDATE_CREATE_FAILED,
+            payload={"reason": reason, "field_key": field_key, "detail": detail},
+        )
+
+    # ------------------------------------------------------------------
+    # Application lifecycle events
+    # ------------------------------------------------------------------
+
+    def log_application_create_started(self, job_id: str, candidate_id: str) -> None:
+        """Emitted when POST /api/applications/ receives a valid request."""
+        self._emit(
+            event_type=AuditEventType.APPLICATION_CREATE_STARTED,
+            payload={"job_id": job_id, "candidate_id": candidate_id},
+        )
+
+    def log_application_created(
+        self, application_id: str, job_id: str, candidate_id: str
+    ) -> None:
+        """Emitted after a new Application row is successfully persisted (HTTP 201)."""
+        self._emit(
+            event_type=AuditEventType.APPLICATION_CREATED,
+            payload={
+                "application_id": application_id,
+                "job_id": job_id,
+                "candidate_id": candidate_id,
+            },
+        )
+
+    def log_application_already_exists(
+        self, application_id: str, job_id: str, candidate_id: str
+    ) -> None:
+        """Emitted when the job–candidate pair already exists (HTTP 200 idempotent)."""
+        self._emit(
+            event_type=AuditEventType.APPLICATION_ALREADY_EXISTS,
+            payload={
+                "application_id": application_id,
+                "job_id": job_id,
+                "candidate_id": candidate_id,
+            },
+        )
+
+    def log_application_create_failed(
+        self,
+        reason: str,
+        *,
+        field_key: Optional[str] = None,
+        detail: Optional[str] = None,
+    ) -> None:
+        """
+        Emitted when POST /api/applications/ cannot create the application.
+
+        Args:
+            reason: One of ``"validation_error"``.
+            field_key: The offending field, if any.
+            detail: Human-readable description of the failure.
+        """
+        self._emit(
+            event_type=AuditEventType.APPLICATION_CREATE_FAILED,
+            payload={"reason": reason, "field_key": field_key, "detail": detail},
+        )
+
+    # ------------------------------------------------------------------
+    # Pipeline internals — step-level trace events
+    # ------------------------------------------------------------------
+
+    def log_pipeline_service_init(
+        self,
+        orchestrator_type: str,
+        embedding_backend_type: str,
+        embedding_dim: Optional[int],
+    ) -> None:
+        """Emitted once when PipelineService.__init__ completes."""
+        self._emit(
+            event_type=AuditEventType.PIPELINE_SERVICE_INIT,
+            payload={
+                "orchestrator_type":      orchestrator_type,
+                "embedding_backend_type": embedding_backend_type,
+                "embedding_dim":          embedding_dim,
+            },
+        )
+
+    def log_pipeline_embeddings_built(
+        self,
+        application_id: str,
+        candidate_sections: list[str],
+        job_sections: list[str],
+        embedding_dim: int,
+    ) -> None:
+        """Emitted after candidate and job embeddings are constructed."""
+        self._emit(
+            event_type=AuditEventType.PIPELINE_EMBEDDINGS_BUILT,
+            payload={
+                "application_id":    application_id,
+                "candidate_sections": candidate_sections,
+                "job_sections":       job_sections,
+                "candidate_section_count": len(candidate_sections),
+                "job_section_count":       len(job_sections),
+                "embedding_dim":           embedding_dim,
+            },
+        )
+
+    def log_pipeline_gate_result(
+        self,
+        application_id: str,
+        gate_outcome: str,
+        gate_passed: bool,
+        criterion_results: list[dict],
+    ) -> None:
+        """Emitted after the hard-gate stage completes with per-criterion detail."""
+        self._emit(
+            event_type=AuditEventType.PIPELINE_GATE_RESULT,
+            payload={
+                "application_id": application_id,
+                "gate_outcome":   gate_outcome,
+                "gate_passed":    gate_passed,
+                "criteria":       criterion_results,
+            },
+        )
+
+    def log_pipeline_semantic_result(
+        self,
+        application_id: str,
+        semantic_score: float,
+        section_scores: dict[str, float],
+    ) -> None:
+        """Emitted after the semantic-match stage completes."""
+        self._emit(
+            event_type=AuditEventType.PIPELINE_SEMANTIC_RESULT,
+            payload={
+                "application_id": application_id,
+                "semantic_score": semantic_score,
+                "section_scores": section_scores,
+                "sections_scored": len(section_scores),
+            },
+        )
+
+    def log_pipeline_rubric_result(
+        self,
+        application_id: str,
+        rubric_score: float,
+        criterion_scores: dict[str, float],
+        evidence_quality: float,
+    ) -> None:
+        """Emitted after the LLM rubric stage completes."""
+        self._emit(
+            event_type=AuditEventType.PIPELINE_RUBRIC_RESULT,
+            payload={
+                "application_id":  application_id,
+                "rubric_score":    rubric_score,
+                "criterion_scores": criterion_scores,
+                "evidence_quality": evidence_quality,
+            },
+        )
+
+    def log_pipeline_persisted(
+        self,
+        application_id: str,
+        gate_outcome: str,
+        gate_passed: bool,
+        stages_persisted: list[str],
+        new_status: str,
+    ) -> None:
+        """Emitted after all pipeline results are written to the database."""
+        self._emit(
+            event_type=AuditEventType.PIPELINE_PERSISTED,
+            payload={
+                "application_id":  application_id,
+                "gate_outcome":    gate_outcome,
+                "gate_passed":     gate_passed,
+                "stages_persisted": stages_persisted,
+                "new_status":       new_status,
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # RubricEvaluator internals
+    # ------------------------------------------------------------------
+
+    def log_rubric_llm_call_started(
+        self,
+        model_name: str,
+        system_prompt_len: int,
+        user_prompt_len: int,
+        resume_sections: list[str],
+        job_requirement_keys: list[str],
+    ) -> None:
+        """Emitted immediately before the LLM backend is called."""
+        self._emit(
+            event_type=AuditEventType.RUBRIC_LLM_CALL_STARTED,
+            payload={
+                "model_name":          model_name,
+                "system_prompt_len":   system_prompt_len,
+                "user_prompt_len":     user_prompt_len,
+                "resume_sections":     resume_sections,
+                "job_requirement_keys": job_requirement_keys,
+            },
+        )
+
+    def log_rubric_llm_call_finished(
+        self,
+        model_name: str,
+        response_type: str,
+        response_len: Optional[int],
+        latency_ms: float,
+        used_fallback: bool,
+    ) -> None:
+        """Emitted after the LLM returns (before parsing). response_type: 'structured' | 'string'."""
+        self._emit(
+            event_type=AuditEventType.RUBRIC_LLM_CALL_FINISHED,
+            payload={
+                "model_name":    model_name,
+                "response_type": response_type,
+                "response_len":  response_len,
+                "latency_ms":    latency_ms,
+                "used_fallback": used_fallback,
+            },
+        )
+
+    def log_rubric_response_parsed(
+        self,
+        parse_path: str,
+        had_markdown_fence: bool,
+        criteria_found: list[str],
+        is_fallback: bool,
+    ) -> None:
+        """
+        Emitted after _parse_response() resolves.
+
+        parse_path values:
+          'structured_object' — instructor returned a validated Pydantic object
+          'json_string'       — raw JSON string parsed successfully
+          'fallback_empty'    — LLM returned an empty string
+          'fallback_parse_error' — JSON parsing failed
+        """
+        self._emit(
+            event_type=AuditEventType.RUBRIC_RESPONSE_PARSED,
+            payload={
+                "parse_path":        parse_path,
+                "had_markdown_fence": had_markdown_fence,
+                "criteria_found":    criteria_found,
+                "criteria_count":    len(criteria_found),
+                "is_fallback":       is_fallback,
+            },
+        )
+
+    def log_rubric_scored(
+        self,
+        raw_scores: dict[str, float],
+        clamped_scores: dict[str, float],
+        weighted_sum: float,
+        normalized_score: float,
+        evidence_per_criterion: dict[str, int],
+        evidence_quality: float,
+    ) -> None:
+        """Emitted after _score() computes the final RubricResult."""
+        self._emit(
+            event_type=AuditEventType.RUBRIC_SCORED,
+            payload={
+                "raw_scores":             raw_scores,
+                "clamped_scores":         clamped_scores,
+                "weighted_sum":           round(weighted_sum, 4),
+                "normalized_score":       round(normalized_score, 4),
+                "evidence_per_criterion": evidence_per_criterion,
+                "evidence_quality":       round(evidence_quality, 4),
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # Dashboard stats events
+    # ------------------------------------------------------------------
+
+    def log_dashboard_stats_fetched(
+        self,
+        *,
+        applications: int,
+        candidates: int,
+        jobs: int,
+        active_jobs: int,
+        llm_success_rate: float,
+        latency_ms: float,
+    ) -> None:
+        """Emitted after GET /api/dashboard/stats/ successfully aggregates all queries."""
+        self._emit(
+            event_type=AuditEventType.DASHBOARD_STATS_FETCHED,
+            payload={
+                "totals": {
+                    "applications": applications,
+                    "candidates":   candidates,
+                    "jobs":         jobs,
+                    "active_jobs":  active_jobs,
+                },
+                "llm_success_rate": llm_success_rate,
+                "latency_ms": latency_ms,
             },
         )
 

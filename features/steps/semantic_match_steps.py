@@ -7,7 +7,7 @@ Delegates entirely to domain objects — no logic here.
 from __future__ import annotations
 
 import pytest
-from pytest_bdd import given, parsers, then, when
+from pytest_bdd import given, parsers, scenarios, then, when
 
 from resume_pipeline.observability import PipelineObservability
 from resume_pipeline.pipeline.semantic_match import SemanticMatchEvaluator
@@ -17,6 +17,10 @@ from resume_pipeline.search.rrf import (
     normalize_rrf_score,
     section_weighted_similarity,
 )
+
+pytestmark = pytest.mark.bdd
+
+scenarios("semantic_match.feature")
 
 
 # ---------------------------------------------------------------------------
@@ -41,9 +45,9 @@ def init_evaluator() -> dict:
     return {"evaluator": evaluator, "obs": obs}
 
 
-@given(parsers.parse("the standard section weights are:\n{raw_table}"))
-def standard_section_weights(ctx: dict, raw_table: str) -> None:
-    rows = _parse_table(raw_table)
+@given("the standard section weights are:")
+def standard_section_weights(ctx: dict, datatable) -> None:
+    rows = _datatable_to_dicts(datatable)
     ctx["section_weights"] = {
         row["section"]: float(row["weight"]) for row in rows
     }
@@ -63,17 +67,17 @@ def job_section_vector(ctx: dict, section: str, vector: str) -> None:
     ctx.setdefault("job_embeddings", {})[section] = _parse_vector(vector)
 
 
-@given(parsers.parse("candidate section embeddings:\n{raw_table}"))
-def candidate_section_embeddings_table(ctx: dict, raw_table: str) -> None:
-    rows = _parse_table(raw_table)
+@given("candidate section embeddings:")
+def candidate_section_embeddings_table(ctx: dict, datatable) -> None:
+    rows = _datatable_to_dicts(datatable)
     ctx["candidate_embeddings"] = {
         row["section"]: _parse_vector(row["vector"]) for row in rows
     }
 
 
-@given(parsers.parse("job section embeddings:\n{raw_table}"))
-def job_section_embeddings_table(ctx: dict, raw_table: str) -> None:
-    rows = _parse_table(raw_table)
+@given("job section embeddings:")
+def job_section_embeddings_table(ctx: dict, datatable) -> None:
+    rows = _datatable_to_dicts(datatable)
     ctx["job_embeddings"] = {
         row["section"]: _parse_vector(row["vector"]) for row in rows
     }
@@ -84,6 +88,7 @@ def job_section_embeddings_table(ctx: dict, raw_table: str) -> None:
 # ---------------------------------------------------------------------------
 
 @given(parsers.parse("a candidate has lexical rank {lex:d} and semantic rank {sem:d}"))
+@given(parsers.parse("the candidate has lexical rank {lex:d} and semantic rank {sem:d}"))
 def both_ranks(ctx: dict, lex: int, sem: int) -> None:
     ctx["lexical_rank"] = lex
     ctx["semantic_rank"] = sem
@@ -102,6 +107,7 @@ def only_semantic_rank(ctx: dict, sem: int) -> None:
 
 
 @given("a candidate has no lexical rank and no semantic rank")
+@given("the candidate has no lexical rank and no semantic rank")
 def no_ranks(ctx: dict) -> None:
     ctx["lexical_rank"] = None
     ctx["semantic_rank"] = None
@@ -178,11 +184,9 @@ def compute_rrf(ctx: dict, k: int) -> None:
         semantic_rank=ctx.get("semantic_rank"),
         k=k,
     )
-    num_sources = (
-        (1 if ctx.get("lexical_rank") is not None else 0)
-        + (1 if ctx.get("semantic_rank") is not None else 0)
-    )
-    ctx["rrf_score"] = normalize_rrf_score(raw, k=k, num_sources=num_sources)
+    # Always normalize against the dual-channel maximum so a single-source
+    # score is always < 1.0 (1.0 requires both channels to contribute).
+    ctx["rrf_score"] = normalize_rrf_score(raw, k=k, num_sources=2)
     ctx["rrf_k"] = k
 
 
@@ -297,6 +301,14 @@ def assert_latency_gte(ctx: dict, threshold: float) -> None:
 # ---------------------------------------------------------------------------
 # Table and vector parsers
 # ---------------------------------------------------------------------------
+
+def _datatable_to_dicts(datatable) -> list[dict[str, str]]:
+    """Convert pytest-bdd 8 datatable (list[list[str]]) to list of dicts."""
+    if not datatable:
+        return []
+    headers = datatable[0]
+    return [dict(zip(headers, row)) for row in datatable[1:]]
+
 
 def _parse_table(raw: str) -> list[dict[str, str]]:
     lines = [line.strip() for line in raw.strip().splitlines() if line.strip()]

@@ -13,11 +13,15 @@ import uuid
 from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
-from pytest_bdd import given, parsers, then, when
+from pytest_bdd import given, parsers, scenarios, then, when
 from rest_framework.test import APIRequestFactory
 
 from resume_pipeline.models import Application, FinalScore, HumanReview
 from resume_pipeline.views import ApplicationScoreView, HumanReviewCreateView
+
+pytestmark = pytest.mark.bdd
+
+scenarios("human_review.feature")
 
 
 # ---------------------------------------------------------------------------
@@ -33,10 +37,9 @@ def ctx() -> dict:
 # Background
 # ---------------------------------------------------------------------------
 
-@given(parsers.parse("a scored application exists with:\n{raw_table}"))
-def scored_application(ctx: dict, raw_table: str) -> None:
-    rows = _parse_table(raw_table)
-    fields = {row["field"]: row["value"] for row in rows}
+@given("a scored application exists with:")
+def scored_application(ctx: dict, datatable) -> None:
+    fields = {row[0]: row[1] for row in datatable[1:]}
 
     app_id = str(uuid.uuid4())
     ctx["application_id"] = app_id
@@ -129,6 +132,11 @@ def get_score_card_by_id(ctx: dict, app_id: str) -> None:
 
 @when(parsers.parse('I POST a review decision "{decision}" with no reason'))
 def post_review_no_reason(ctx: dict, decision: str) -> None:
+    _post_review(ctx, decision=decision, reason=None)
+
+
+@when(parsers.parse('I POST a review decision "{decision}" with reason ""'))
+def post_review_with_empty_reason(ctx: dict, decision: str) -> None:
     _post_review(ctx, decision=decision, reason=None)
 
 
