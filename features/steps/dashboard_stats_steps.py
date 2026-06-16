@@ -47,7 +47,8 @@ def ctx() -> dict:
         "app_updated_old":    [],   # mocks with updated_at > 24h ago
         "today_primary":      0,
         "today_fallback":     0,
-        "user_count":         0,
+        "candidate_count":    0,
+        "job_count":          0,
     }
 
 
@@ -77,9 +78,14 @@ def no_rubric_scores(ctx: dict) -> None:
     ctx["today_fallback"] = 0
 
 
-@given("there are no User records")
-def no_users(ctx: dict) -> None:
-    ctx["user_count"] = 0
+@given("there are no Candidate records")
+def no_candidates(ctx: dict) -> None:
+    ctx["candidate_count"] = 0
+
+
+@given("there are no Job records")
+def no_jobs(ctx: dict) -> None:
+    ctx["job_count"] = 0
 
 
 @given(parsers.parse("{count:d} Application records exist with status \"{status}\""))
@@ -193,7 +199,8 @@ def get_dashboard_stats(ctx: dict) -> None:
     with (
         patch("resume_pipeline.views.Application") as MockApp,
         patch("resume_pipeline.views.RubricScore") as MockRS,
-        patch("resume_pipeline.views.get_user_model") as MockGetUser,
+        patch("resume_pipeline.views.Candidate") as MockCandidate,
+        patch("resume_pipeline.views.Job") as MockJob,
     ):
         # --- Application.objects.count() ---
         MockApp.objects.count.return_value = total_apps
@@ -282,10 +289,9 @@ def get_dashboard_stats(ctx: dict) -> None:
         rs_qs.annotate.return_value.values.return_value.annotate.return_value = ts_rows
         MockRS.objects.filter.return_value = rs_qs
 
-        # --- User model ---
-        MockUser = MagicMock()
-        MockGetUser.return_value = MockUser
-        MockUser.objects.filter.return_value.count.return_value = ctx.get("user_count", 0)
+        # --- Candidate / Job counts ---
+        MockCandidate.objects.count.return_value = ctx.get("candidate_count", 0)
+        MockJob.objects.count.return_value = ctx.get("job_count", 0)
 
         # --- Execute the view ---
         factory = APIRequestFactory()
@@ -333,10 +339,16 @@ def assert_totals_active_jobs(ctx: dict, expected: int) -> None:
     assert actual == expected, f"totals.active_jobs: expected {expected}, got {actual}"
 
 
-@then(parsers.parse("totals.workspace_users is {expected:d}"))
-def assert_totals_users(ctx: dict, expected: int) -> None:
-    actual = ctx["response"].data["totals"]["workspace_users"]
-    assert actual == expected, f"totals.workspace_users: expected {expected}, got {actual}"
+@then(parsers.parse("totals.candidates is {expected:d}"))
+def assert_totals_candidates(ctx: dict, expected: int) -> None:
+    actual = ctx["response"].data["totals"]["candidates"]
+    assert actual == expected, f"totals.candidates: expected {expected}, got {actual}"
+
+
+@then(parsers.parse("totals.jobs is {expected:d}"))
+def assert_totals_jobs(ctx: dict, expected: int) -> None:
+    actual = ctx["response"].data["totals"]["jobs"]
+    assert actual == expected, f"totals.jobs: expected {expected}, got {actual}"
 
 
 @then(parsers.parse("totals.llm_success_rate is {expected:f}"))

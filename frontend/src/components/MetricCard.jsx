@@ -11,7 +11,7 @@
 
 export default function MetricCard({ label, value, sub, icon, color = 'brand' }) {
   return (
-    <div className="metric-card" style={{ '--metric-color': `var(--color-${color})` }}>
+    <div className="metric-card" data-color={color} style={{ '--metric-color': `var(--color-${color})` }}>
       <div className="metric-card__header">
         {icon && <span className="metric-card__icon" aria-hidden="true">{icon}</span>}
         <span className="metric-card__label">{label}</span>

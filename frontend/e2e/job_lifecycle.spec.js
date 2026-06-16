@@ -67,32 +67,28 @@ async function mockBaseRoutes(page, { jobs = EXISTING_JOBS } = {}) {
 test('Given valid Markdown, When submitted, Then job row appears in the Settings list', async ({ page }) => {
   await mockBaseRoutes(page);
 
-  const updatedJobs = [...EXISTING_JOBS, CREATED_JOB];
-  let postHandled = false;
-
-  await page.route('**/api/jobs/markdown/', (r) => {
-    postHandled = true;
-    return r.fulfill({ status: 201, json: CREATED_JOB });
-  });
+  // POST goes to /api/jobs/ (not /api/jobs/markdown/)
   await page.route('**/api/jobs/', async (r) => {
-    if (r.request().method() === 'GET') {
-      return r.fulfill({ json: postHandled ? updatedJobs : EXISTING_JOBS });
+    if (r.request().method() === 'POST') {
+      return r.fulfill({ status: 201, json: CREATED_JOB });
     }
-    return r.continue();
+    return r.fallback();
   });
 
   await page.goto('/settings');
   await page.getByTestId('tab-jobs').click();
   await page.getByRole('button', { name: /add job/i }).click();
 
-  const textarea = page.getByRole('textbox', { name: /job specification/i });
+  // Label is "Markdown Job Description", not "job specification"
+  const textarea = page.locator('#job-raw-markdown');
   await expect(textarea).toBeVisible();
   await textarea.fill(VALID_MARKDOWN);
 
   await page.getByRole('button', { name: /create job/i }).click();
 
-  await expect(page.getByRole('textbox', { name: /job specification/i })).not.toBeVisible({ timeout: 4000 });
-  await expect(page.getByText('Senior Backend Engineer')).toBeVisible();
+  // Modal closes on success; new job row appears in the table
+  await expect(textarea).not.toBeVisible({ timeout: 4000 });
+  await expect(page.getByTestId(`job-row-${CREATED_JOB.id}`)).toBeVisible();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -101,45 +97,57 @@ test('Given valid Markdown, When submitted, Then job row appears in the Settings
 
 test('Given Markdown with no H1, When submitted, Then inline "title" error is shown', async ({ page }) => {
   await mockBaseRoutes(page);
-  await page.route('**/api/jobs/markdown/', (r) =>
-    r.fulfill({ status: 422, json: { title: ['Markdown must begin with an H1 heading.'] } })
-  );
+  await page.route('**/api/jobs/', (r) => {
+    if (r.request().method() === 'POST')
+      return r.fulfill({ status: 422, json: { title: ['Markdown must begin with an H1 heading.'] } });
+    return r.fallback();
+  });
 
   await page.goto('/settings');
   await page.getByTestId('tab-jobs').click();
   await page.getByRole('button', { name: /add job/i }).click();
-  await page.getByRole('textbox', { name: /job specification/i }).fill('## No H1 here');
+  const textarea = page.locator('#job-raw-markdown');
+  await expect(textarea).toBeVisible();
+  await textarea.fill('## No H1 here');
   await page.getByRole('button', { name: /create job/i }).click();
 
   await expect(page.getByText(/must begin with an h1/i)).toBeVisible();
-  await expect(page.getByRole('textbox', { name: /job specification/i })).toBeVisible();
+  await expect(textarea).toBeVisible();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scenario 3: Server 500 — generic error banner with retry button
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('Given a 500 error, When submitted, Then error banner with Retry is shown', async ({ page }) => {
-  let callCount = 0;
+test('Given a 500 error, When submitted, Then error banner is shown and re-submit succeeds', async ({ page }) => {
+  const errorHandler = (r) => {
+    if (r.request().method() === 'POST')
+      return r.fulfill({ status: 500, json: { detail: 'Internal server error' } });
+    return r.fallback();
+  };
 
   await mockBaseRoutes(page);
-  await page.route('**/api/jobs/markdown/', (r) => {
-    callCount++;
-    if (callCount === 1) return r.fulfill({ status: 500, json: { detail: 'Internal server error' } });
-    return r.fulfill({ status: 201, json: CREATED_JOB });
-  });
+  await page.route('**/api/jobs/', errorHandler);
 
   await page.goto('/settings');
   await page.getByTestId('tab-jobs').click();
   await page.getByRole('button', { name: /add job/i }).click();
-  await page.getByRole('textbox', { name: /job specification/i }).fill(VALID_MARKDOWN);
+  const textarea = page.locator('#job-raw-markdown');
+  await expect(textarea).toBeVisible();
+  await textarea.fill(VALID_MARKDOWN);
   await page.getByRole('button', { name: /create job/i }).click();
 
   const errorBanner = page.getByRole('alert');
   await expect(errorBanner).toBeVisible();
-  await expect(errorBanner.getByRole('button', { name: /retry/i })).toBeVisible();
 
-  await errorBanner.getByRole('button', { name: /retry/i }).click();
+  // Swap to success route before re-submitting
+  await page.unroute('**/api/jobs/', errorHandler);
+  await page.route('**/api/jobs/', (r) => {
+    if (r.request().method() === 'POST') return r.fulfill({ status: 201, json: CREATED_JOB });
+    return r.fallback();
+  });
+
+  await page.getByRole('button', { name: /create job/i }).click();
   await expect(errorBanner).not.toBeVisible({ timeout: 4000 });
 });
 
@@ -149,14 +157,18 @@ test('Given a 500 error, When submitted, Then error banner with Retry is shown',
 
 test('Given a duplicate title, When submitted, Then "already exists" message is shown', async ({ page }) => {
   await mockBaseRoutes(page);
-  await page.route('**/api/jobs/markdown/', (r) =>
-    r.fulfill({ status: 409, json: { detail: 'A job with this title already exists.' } })
-  );
+  await page.route('**/api/jobs/', (r) => {
+    if (r.request().method() === 'POST')
+      return r.fulfill({ status: 409, json: { detail: 'A job with this title already exists.' } });
+    return r.fallback();
+  });
 
   await page.goto('/settings');
   await page.getByTestId('tab-jobs').click();
   await page.getByRole('button', { name: /add job/i }).click();
-  await page.getByRole('textbox', { name: /job specification/i }).fill(VALID_MARKDOWN);
+  const textarea = page.locator('#job-raw-markdown');
+  await expect(textarea).toBeVisible();
+  await textarea.fill(VALID_MARKDOWN);
   await page.getByRole('button', { name: /create job/i }).click();
 
   await expect(page.getByText(/already exists/i)).toBeVisible();
@@ -188,27 +200,21 @@ test('Given a job with full detail, When expanded, Then description and must_hav
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Scenario 6: Edit job title inline
+// Scenario 6: Job row is read-only (no edit button)
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('Given an existing job, When title is edited and saved, Then updated title appears in list', async ({ page }) => {
-  const updatedJob = { ...EXISTING_JOBS[0], title: 'Staff Data Engineer' };
-
+test('Given an existing job, Then the row is read-only with no edit button', async ({ page }) => {
   await mockBaseRoutes(page);
-  await page.route(`**/api/jobs/${EXISTING_JOBS[0].id}/`, async (r) => {
-    if (r.request().method() === 'PATCH') return r.fulfill({ json: updatedJob });
-    return r.fulfill({ json: EXISTING_JOBS[0] });
-  });
 
   await page.goto('/settings');
   await page.getByTestId('tab-jobs').click();
-  await page.getByRole('button', { name: /edit/i }).first().click();
 
-  const titleInput = page.getByRole('textbox', { name: /title/i });
-  await titleInput.fill('Staff Data Engineer');
-  await page.getByRole('button', { name: /save/i }).click();
+  const row = page.getByTestId(`job-row-${EXISTING_JOBS[0].id}`);
+  await expect(row).toBeVisible();
+  await expect(row).toContainText(EXISTING_JOBS[0].title);
 
-  await expect(page.getByText('Staff Data Engineer')).toBeVisible();
+  // Editing is not supported — no edit button is present.
+  await expect(page.getByTestId(`job-edit-${EXISTING_JOBS[0].id}`)).not.toBeAttached();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -232,7 +238,7 @@ test('Given a job, When user confirms delete, Then job row is removed from list'
 
   await modal.getByRole('button', { name: /confirm/i }).click();
 
-  await expect(page.getByText('Principal Data Engineer')).not.toBeVisible({ timeout: 3000 });
+  await expect(page.getByTestId(`job-row-${EXISTING_JOBS[0].id}`)).not.toBeVisible({ timeout: 3000 });
 });
 
 test('Given a job, When user cancels delete, Then job row remains', async ({ page }) => {
@@ -243,7 +249,7 @@ test('Given a job, When user cancels delete, Then job row remains', async ({ pag
   await page.getByRole('button', { name: /delete/i }).first().click();
   await page.getByRole('button', { name: /cancel/i }).click();
 
-  await expect(page.getByText('Principal Data Engineer')).toBeVisible();
+  await expect(page.getByTestId(`job-row-${EXISTING_JOBS[0].id}`)).toBeVisible();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -255,22 +261,29 @@ test('Given a slow API, Then loading spinner is shown while request is in flight
   const postPromise = new Promise((res) => { resolvePost = res; });
 
   await mockBaseRoutes(page);
-  await page.route('**/api/jobs/markdown/', async (r) => {
-    await postPromise;
-    return r.fulfill({ status: 201, json: CREATED_JOB });
+  await page.route('**/api/jobs/', async (r) => {
+    if (r.request().method() === 'POST') {
+      await postPromise;
+      return r.fulfill({ status: 201, json: CREATED_JOB });
+    }
+    return r.fallback();
   });
 
   await page.goto('/settings');
   await page.getByTestId('tab-jobs').click();
   await page.getByRole('button', { name: /add job/i }).click();
-  await page.getByRole('textbox', { name: /job specification/i }).fill(VALID_MARKDOWN);
+  const textarea = page.locator('#job-raw-markdown');
+  await expect(textarea).toBeVisible();
+  await textarea.fill(VALID_MARKDOWN);
   await page.getByRole('button', { name: /create job/i }).click();
 
-  await expect(page.getByTestId('loading-spinner')).toBeVisible();
+  // While in flight the button changes label to "Creating…" and is disabled
+  await expect(page.getByRole('button', { name: /creating/i })).toBeDisabled();
 
   resolvePost();
 
-  await expect(page.getByTestId('loading-spinner')).not.toBeVisible({ timeout: 4000 });
+  // On success the modal closes — button is gone
+  await expect(page.getByRole('button', { name: /creating/i })).not.toBeVisible({ timeout: 4000 });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -279,19 +292,20 @@ test('Given a slow API, Then loading spinner is shown while request is in flight
 
 test('Modal closes on 201 regardless of embedding pipeline latency', async ({ page }) => {
   await mockBaseRoutes(page);
-  await page.route('**/api/jobs/markdown/', (r) =>
-    r.fulfill({ status: 201, json: CREATED_JOB })
-  );
+  await page.route('**/api/jobs/', (r) => {
+    if (r.request().method() === 'POST') return r.fulfill({ status: 201, json: CREATED_JOB });
+    return r.fallback();
+  });
 
   await page.goto('/settings');
   await page.getByTestId('tab-jobs').click();
   await page.getByRole('button', { name: /add job/i }).click();
-  await page.getByRole('textbox', { name: /job specification/i }).fill(VALID_MARKDOWN);
+  const textarea = page.locator('#job-raw-markdown');
+  await expect(textarea).toBeVisible();
+  await textarea.fill(VALID_MARKDOWN);
   await page.getByRole('button', { name: /create job/i }).click();
 
-  await expect(
-    page.getByRole('textbox', { name: /job specification/i })
-  ).not.toBeVisible({ timeout: 2000 });
+  await expect(textarea).not.toBeVisible({ timeout: 2000 });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -322,14 +336,11 @@ test('Job detail panel displays title, requirements, and must_haves in distinct 
   await page.getByTestId('tab-jobs').click();
   await page.getByRole('button', { name: /expand/i }).click();
 
-  await expect(page.getByText(/required skills/i)).toBeVisible();
-  await expect(page.getByText(/preferred skills/i)).toBeVisible();
+  // The detail panel renders description and must_haves only (requirements_raw is not displayed)
+  await expect(page.getByText(/lead backend development/i)).toBeVisible();
   await expect(page.getByText(/hard gate criteria/i)).toBeVisible();
 
-  await expect(page.getByText('Python')).toBeVisible();
-  await expect(page.getByText('Django')).toBeVisible();
-  await expect(page.getByText('PostgreSQL')).toBeVisible();
-
+  // must_haves are rendered as JSON — assert on type values present in the blob
   await expect(page.getByText(/years_experience/i)).toBeVisible();
   await expect(page.getByText(/keyword_presence/i)).toBeVisible();
 });

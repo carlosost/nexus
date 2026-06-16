@@ -102,28 +102,48 @@ class CandidateDetailSerializer(serializers.ModelSerializer):
 
 class CandidateCreateSerializer(serializers.Serializer):
     """
-    Creates a Candidate from a PDF resume upload.
+    Creates a Candidate from a resume upload — PDF, or Word (.doc / .docx).
 
-    The PDF is parsed by ResumeParser (pymupdf primary / pdfplumber fallback)
-    and the resulting section dict is stored in resume_parsed.  Raw text is
-    stored in resume_raw for audit / reprocessing purposes.
+    Word uploads are converted to PDF server-side (LibreOffice headless, see
+    resume_pipeline/ingestion/word_converter.py) before ResumeParser ever
+    sees them, so the parsing stage stays PDF-only and unaware of the
+    original upload format. The PDF (original or converted) is parsed by
+    ResumeParser (pymupdf primary / pdfplumber fallback) and the resulting
+    section dict is stored in resume_parsed. Raw text is stored in
+    resume_raw for audit / reprocessing purposes.
 
     Accepts multipart/form-data:
         name        string   — candidate's full name
         email       string   — unique contact email
-        resume_pdf  file     — PDF resume (validated: content_type, max 10 MB)
+        resume_pdf  file     — PDF or Word resume (validated: content_type,
+                               extension, max 10 MB). The field name stays
+                               resume_pdf for backward API compatibility even
+                               though it now also accepts Word documents.
     """
     name       = serializers.CharField(max_length=255)
     email      = serializers.EmailField()
     resume_pdf = serializers.FileField()
 
+    #: PDF content-types — unchanged from the original PDF-only behavior.
+    _PDF_CONTENT_TYPES = {"application/pdf", "application/x-pdf"}
+
     def validate_resume_pdf(self, file):
-        allowed = {"application/pdf", "application/x-pdf"}
+        from resume_pipeline.ingestion.word_converter import (
+            WORD_CONTENT_TYPES,
+            WORD_EXTENSIONS,
+        )
+
+        allowed_content_types = self._PDF_CONTENT_TYPES | WORD_CONTENT_TYPES
+        allowed_extensions = (".pdf",) + WORD_EXTENSIONS
+
         ct = getattr(file, "content_type", "")
-        if ct not in allowed and not file.name.lower().endswith(".pdf"):
-            raise serializers.ValidationError("Only PDF files are accepted.")
-        if file.size > 10 * 1024 * 1024:  # 10 MB
-            raise serializers.ValidationError("Resume PDF must be smaller than 10 MB.")
+        name_lower = file.name.lower()
+        if ct not in allowed_content_types and not name_lower.endswith(allowed_extensions):
+            raise serializers.ValidationError(
+                "Only PDF or Word (.doc, .docx) files are accepted."
+            )
+        if file.size > 10 * 1024 * 1024:  # 10 MB — applies to the original upload
+            raise serializers.ValidationError("Resume file must be smaller than 10 MB.")
         return file
 
     def validate_email(self, value: str) -> str:

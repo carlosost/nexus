@@ -8,9 +8,27 @@
  *   Given data → legend labels "Primary" and "Fallback" are present
  */
 
-import { describe, test, expect, beforeAll } from 'vitest';
+import { describe, test, expect, beforeAll, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import LLMResilienceChart from '../components/LLMResilienceChart.jsx';
+
+// ResponsiveContainer normally measures the DOM and clones its child with
+// {width, height}. jsdom has no layout engine so it reports 0×0, causing
+// AreaChart to bail out and render nothing (Legend included). We replace
+// ResponsiveContainer with a version that injects fixed fake dimensions so
+// the full chart tree — including Legend — renders in tests.
+vi.mock('recharts', async () => {
+  const actual = await vi.importActual('recharts');
+  const { cloneElement } = await import('react');
+  return {
+    ...actual,
+    ResponsiveContainer: ({ children, width = 800, height = 300 }) => (
+      <div className="recharts-responsive-container" style={{ width, height }}>
+        {cloneElement(children, { width: 800, height: 300 })}
+      </div>
+    ),
+  };
+});
 
 beforeAll(() => {
   global.ResizeObserver = class {

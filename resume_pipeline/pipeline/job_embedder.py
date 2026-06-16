@@ -24,7 +24,12 @@ can patch it without touching the ORM:
 from __future__ import annotations
 
 import json
+import math
 import os
+import time
+
+from resume_pipeline.logging_module import audit_logger
+from resume_pipeline.observability import pipeline_observability
 
 
 # ---------------------------------------------------------------------------
@@ -52,29 +57,78 @@ def embed_job_sections(job) -> list:
     # (the module-level import would run during test collection).
     from resume_pipeline.models import JobSectionEmbedding
 
-    sections = _build_sections(job)
+    job_id    = str(job.id)
+    backend   = _model_name()
+    sections  = _build_sections(job)
+
+    audit_logger.log_job_embedding_started(
+        job_id=job_id,
+        job_title=job.title,
+        sections=list(sections.keys()),
+        backend=backend,
+    )
+
     results: list = []
+    t_total_start = time.perf_counter()
 
     for section_name, text in sections.items():
-        vector = _call_embedding_api(text)
+        t_section_start = time.perf_counter()
+        try:
+            with pipeline_observability.timed(
+                "job_embedding_section", job_id=job_id, section=section_name
+            ):
+                vector = _call_embedding_api(text)
+        except Exception as exc:
+            audit_logger.log_job_embedding_failed(
+                job_id=job_id,
+                section=section_name,
+                exception_type=type(exc).__name__,
+                exception_message=str(exc),
+            )
+            raise
 
-        embedding_obj, _ = JobSectionEmbedding.objects.get_or_create(
+        section_latency_ms = (time.perf_counter() - t_section_start) * 1000
+
+        embedding_obj, created = JobSectionEmbedding.objects.get_or_create(
             job=job,
             section=section_name,
             defaults={
                 "content":    text,
                 "embedding":  vector,
-                "model_name": _model_name(),
+                "model_name": backend,
             },
         )
         # Update if it already existed (PATCH scenario)
-        if embedding_obj.content != text or embedding_obj.embedding != vector:
-            embedding_obj.content   = text
-            embedding_obj.embedding = vector
-            embedding_obj.model_name = _model_name()
+        if not created and (
+            embedding_obj.content != text or embedding_obj.embedding != vector
+        ):
+            embedding_obj.content    = text
+            embedding_obj.embedding  = vector
+            embedding_obj.model_name = backend
             embedding_obj.save(update_fields=["content", "embedding", "model_name"])
 
+        vector_norm = math.sqrt(sum(x * x for x in vector)) if vector else 0.0
+
+        audit_logger.log_job_embedding_section_done(
+            job_id=job_id,
+            section=section_name,
+            text_len=len(text),
+            vector_dim=len(vector),
+            vector_norm=vector_norm,
+            is_new=created,
+            latency_ms=section_latency_ms,
+        )
+
         results.append(embedding_obj)
+
+    total_latency_ms = (time.perf_counter() - t_total_start) * 1000
+
+    audit_logger.log_job_embedding_completed(
+        job_id=job_id,
+        sections_count=len(results),
+        backend=backend,
+        latency_ms=total_latency_ms,
+    )
 
     return results
 
@@ -136,7 +190,7 @@ def _mock_embed(text: str) -> list[float]:
     Deterministic mock embedding: L2-normalised vector derived from the
     text hash so that repeated calls for the same text return identical vectors.
     """
-    import hashlib, math
+    import hashlib
 
     dim = 1536
     seed = int(hashlib.md5(text.encode()).hexdigest(), 16)

@@ -28,10 +28,9 @@
  *   Then  the job row disappears from the list
  *   And   the delete API endpoint was called
  *
- * Scenario 4: Edit job title in-place
+ * Scenario 4: Job row shows title and dates (no edit button)
  *   Given a job exists in the Settings Jobs list
- *   When  the user clicks Edit, changes the title, and saves
- *   Then  the updated title appears in the list without a page reload
+ *   Then  the row displays the title and no edit button is present
  *
  * Scenario 5: Settings → Dashboard nav link
  *   Given the user is on the Settings page
@@ -65,11 +64,9 @@
  *   Then  the resume section panel becomes visible
  *   And   the parsed section content is displayed
  *
- * Scenario 8: Edit candidate name and email in-place
+ * Scenario 8: Candidate row shows name and email (no edit button)
  *   Given a candidate exists in the Candidates tab
- *   When  the user clicks Edit, updates the name and email, and saves
- *   Then  the updated values appear in the candidate row
- *   And   the old values are no longer visible
+ *   Then  the row displays name and email and no edit button is present
  *
  * Scenario 9: Delete candidate with cascade warning → row disappears
  *   Given a candidate exists in the Candidates tab
@@ -190,7 +187,7 @@ test('Given invalid file type, When uploaded as resume, Then client error appear
   await page.getByText('Upload Resume').click();
 
   // Client-side validation fires — API is NOT called
-  await expect(page.getByRole('alert')).toContainText(/Only PDF files/i);
+  await expect(page.getByRole('alert')).toContainText(/Only PDF or Word/i);
   expect(createCandidateCalled).toBe(false);
 });
 
@@ -204,13 +201,13 @@ test('Full flow: create job → create application → dashboard row appears', a
   // Start with no jobs so we can create one
   await mockApiCollections(page, { jobs: [], applications: [] });
 
-  // POST /api/jobs/ returns the new job
+  // Handle POST only; GET falls back to mockApiCollections' [] handler so the
+  // board starts empty and addJob() adds exactly one row after submission.
   await page.route('**/api/jobs/', async (route) => {
     if (route.request().method() === 'POST') {
       await route.fulfill({ status: 201, json: newJob });
     } else {
-      // GET after creation — return the created job in the list
-      await route.fulfill({ json: [newJob] });
+      await route.fallback();
     }
   });
 
@@ -220,13 +217,15 @@ test('Full flow: create job → create application → dashboard row appears', a
   await page.getByTestId('tab-jobs').click();
   await page.getByTestId('job-create-btn').click();
 
-  await page.getByLabel(/Title/i).fill('Staff ML Engineer');
-  await page.getByLabel(/Description/i).fill('Train models at scale.');
-  await page.getByText('Create Job').click();
+  // JobIngestionModal uses a single raw-markdown textarea, not separate title/description fields.
+  await page.locator('#job-raw-markdown').fill(
+    '# Staff ML Engineer\n\n## Description\nTrain models at scale.'
+  );
+  await page.getByRole('button', { name: 'Create Job' }).click();
 
-  // Scope to job-table: the hidden Applications panel also renders 'Staff ML Engineer'
-  // as an <option> in the job select, so a global getByText() matches multiple elements.
-  await expect(page.getByTestId('job-table').getByText('Staff ML Engineer')).toBeVisible();
+  // Target the row by its testid — avoids strict-mode violations from text
+  // appearing in multiple elements (expand button, option list, etc.).
+  await expect(page.getByTestId(`job-row-${newJob.id}`)).toBeVisible();
 
   // ── Step 2: create an application (Association Center) ───────────────────
   // Now expose the created job and a candidate via the Applications tab
@@ -290,32 +289,17 @@ test('Given a job exists, When user confirms delete, Then job row is removed', a
 // Scenario 4: Edit job title updates list in-place
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('Given a job exists, When user edits title and saves, Then updated title appears', async ({ page }) => {
-  const updatedJob = { ...JOB, title: 'Principal Data Engineer', updated_at: '2024-02-01T00:00:00Z' };
-
+test('Given a job exists, Then the job row shows the title (no edit button)', async ({ page }) => {
   await mockApiCollections(page);
-  await page.route(`**/api/jobs/${JOB.id}/`, async (route) => {
-    if (route.request().method() === 'PATCH') {
-      await route.fulfill({ json: updatedJob });
-    }
-  });
 
   await page.goto('/settings');
 
-  await page.getByTestId(`job-edit-${JOB.id}`).click();
+  const row = page.getByTestId(`job-row-${JOB.id}`);
+  await expect(row).toBeVisible();
+  await expect(row).toContainText(JOB.title);
 
-  // Clear the title field and type the new title
-  const titleInput = page.getByTestId('edit-job-title');
-  await titleInput.clear();
-  await titleInput.fill('Principal Data Engineer');
-
-  await page.getByTestId('edit-job-submit').click();
-
-  // Modal closes; updated title appears in the list.
-  // Scope to job-table: the hidden Applications panel renders job titles as
-  // <option> elements too, causing strict-mode violations on global text match.
-  await expect(page.getByTestId('job-table').getByText('Principal Data Engineer')).toBeVisible();
-  await expect(page.getByTestId('job-table').getByText('Senior Data Engineer')).not.toBeVisible();
+  // Editing is not supported — no edit button is present.
+  await expect(page.getByTestId(`job-edit-${JOB.id}`)).not.toBeAttached();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -358,9 +342,10 @@ test('Given Jobs tab is empty, When user creates a job, Then job row appears in 
   // ── Open modal ────────────────────────────────────────────────────────────
   await page.getByTestId('job-create-btn').click();
 
-  // JobIngestionModal has no data-testids on inputs — locate by element id.
-  await page.locator('#job-title').fill('Senior Data Engineer');
-  await page.locator('#job-description').fill('Build and maintain data pipelines at scale.');
+  // JobIngestionModal accepts a single raw-markdown textarea, not separate fields.
+  await page.locator('#job-raw-markdown').fill(
+    '# Senior Data Engineer\n\n## Description\nBuild and maintain data pipelines at scale.'
+  );
 
   // Submit button identified by visible text (no testid on the button either).
   await page.getByRole('button', { name: 'Create Job' }).click();
@@ -499,57 +484,19 @@ test('Given a candidate with resume sections, When user expands the row, Then se
 // Scenario 8: Edit candidate name and email in-place
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('Given a candidate exists, When user edits name and email and saves, Then updated values appear in list', async ({ page }) => {
-  // Use a name with no substring overlap with the original ("Alice Chen") so
-  // toContainText / not.toContainText assertions are unambiguous.
-  const updated = {
-    ...CANDIDATE,
-    name:  'Dr. Alice Johnson',
-    // Use a domain that shares no substring with the original 'alice@example.com'
-    // so the not.toContainText('Alice Chen') assertion is unambiguous and we
-    // don't need a negative email assertion at all.
-    email: 'dr.johnson@clinic.org',
-  };
-
+test('Given a candidate exists, Then the candidate row shows name and email (no edit button)', async ({ page }) => {
   await mockApiCollections(page);
-  await page.route(`**/api/candidates/${CANDIDATE.id}/`, async (route) => {
-    if (route.request().method() === 'PATCH') {
-      await route.fulfill({ json: updated });
-    }
-  });
 
   await page.goto('/settings');
   await page.getByTestId('tab-candidates').click();
-  await expect(page.getByTestId(`candidate-row-${CANDIDATE.id}`)).toBeVisible();
 
-  // ── Open Edit modal ───────────────────────────────────────────────────────
-  await page.getByTestId(`candidate-edit-${CANDIDATE.id}`).click();
+  const row = page.getByTestId(`candidate-row-${CANDIDATE.id}`);
+  await expect(row).toBeVisible();
+  await expect(row).toContainText(CANDIDATE.name);
+  await expect(row).toContainText(CANDIDATE.email);
 
-  // Wait for the modal's inputs to be ready (useEffect populates them from the
-  // candidate prop when the modal opens).
-  const nameInput = page.getByTestId('edit-cand-name');
-  await expect(nameInput).toBeVisible();
-
-  // ── Update fields ─────────────────────────────────────────────────────────
-  await nameInput.clear();
-  await nameInput.fill('Dr. Alice Johnson');
-
-  const emailInput = page.getByTestId('edit-cand-email');
-  await emailInput.clear();
-  await emailInput.fill('dr.johnson@clinic.org');
-
-  // ── Save ──────────────────────────────────────────────────────────────────
-  await page.getByTestId('edit-cand-submit').click();
-
-  // ── Assertions ────────────────────────────────────────────────────────────
-  // onSuccess calls patchCandidate() which swaps the record in local state;
-  // the modal closes and the row re-renders with the new values.
-  await expect(page.getByTestId(`candidate-row-${CANDIDATE.id}`)).toContainText('Dr. Alice Johnson');
-  await expect(page.getByTestId(`candidate-row-${CANDIDATE.id}`)).toContainText('dr.johnson@clinic.org');
-  await expect(page.getByTestId(`candidate-row-${CANDIDATE.id}`)).not.toContainText('Alice Chen');
-  // No negative email assertion needed: 'dr.johnson@clinic.org' shares no
-  // substring with 'alice@example.com', so the positive assertion above
-  // already proves the old value was replaced.
+  // Editing is not supported — no edit button is present.
+  await expect(page.getByTestId(`candidate-edit-${CANDIDATE.id}`)).not.toBeAttached();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -41,11 +41,11 @@ Feature: Dashboard Statistics API
   Scenario: All totals are zero when no data exists
     Given there are no Application records
     And there are no RubricScore records
-    And there are no User records
     When I GET /api/dashboard/stats/
     Then totals.applications is 0
     And totals.active_jobs is 0
-    And totals.workspace_users is 0
+    And totals.candidates is 0
+    And totals.jobs is 0
     And totals.llm_success_rate is 100.0
 
   # ---------------------------------------------------------------------------

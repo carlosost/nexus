@@ -5,7 +5,7 @@ fused via Reciprocal Rank Fusion.
 Architecture
 ────────────
                     ┌─────────────────────┐
-                    │  HybridSearchEngine  │
+                    │  HybridSearchEngine │
                     └─────────┬───────────┘
                               │
               ┌───────────────┼───────────────┐
@@ -50,8 +50,11 @@ Unit-testable logic (RRF math, cosine similarity) lives in search/rrf.py.
 
 from __future__ import annotations
 
+import time
 from typing import Optional
 
+from resume_pipeline.logging_module import audit_logger
+from resume_pipeline.observability import pipeline_observability
 from resume_pipeline.search.rrf import fuse_ranked_lists
 
 
@@ -140,20 +143,78 @@ class HybridSearchEngine:
             from django.db import connection as _conn
             connection = _conn
 
-        lexical_ids = self._lexical_search(query_text, connection)
-        semantic_ids = self._semantic_search(query_embedding, connection)
-
-        fused = fuse_ranked_lists(
-            lexical_results=lexical_ids,
-            semantic_results=semantic_ids,
-            k=self._rrf_k,
+        audit_logger.log_hybrid_search_started(
+            job_id=job_id,
+            query_text_len=len(query_text),
+            embedding_dim=len(query_embedding),
+            top_k=self._top_k,
         )
 
+        t_total = time.perf_counter()
+
+        try:
+            # ── Lexical (FTS) ─────────────────────────────────────────────
+            t0 = time.perf_counter()
+            with pipeline_observability.timed("hybrid_search_lexical", job_id=job_id):
+                lexical_ids = self._lexical_search(query_text, connection)
+            lexical_ms = (time.perf_counter() - t0) * 1000
+
+            audit_logger.log_hybrid_search_lexical(
+                job_id=job_id,
+                results_count=len(lexical_ids),
+                latency_ms=lexical_ms,
+            )
+
+            # ── Semantic (pgvector) ───────────────────────────────────────
+            t0 = time.perf_counter()
+            with pipeline_observability.timed("hybrid_search_semantic", job_id=job_id):
+                semantic_ids = self._semantic_search(query_embedding, connection)
+            semantic_ms = (time.perf_counter() - t0) * 1000
+
+            audit_logger.log_hybrid_search_semantic(
+                job_id=job_id,
+                section=self._primary_section,
+                results_count=len(semantic_ids),
+                latency_ms=semantic_ms,
+            )
+
+            # ── RRF fusion ────────────────────────────────────────────────
+            t0 = time.perf_counter()
+            with pipeline_observability.timed("hybrid_search_fusion", job_id=job_id):
+                fused = fuse_ranked_lists(
+                    lexical_results=lexical_ids,
+                    semantic_results=semantic_ids,
+                    k=self._rrf_k,
+                )
+            fusion_ms = (time.perf_counter() - t0) * 1000
+
+            top_fused_score = fused[0][1] if fused else None
+            num_sources = (1 if lexical_ids else 0) + (1 if semantic_ids else 0)
+
+            audit_logger.log_hybrid_search_fused(
+                job_id=job_id,
+                lexical_count=len(lexical_ids),
+                semantic_count=len(semantic_ids),
+                fused_count=len(fused),
+                top_score=top_fused_score,
+                num_sources=num_sources,
+                latency_ms=fusion_ms,
+            )
+
+        except Exception as exc:
+            audit_logger.log_hybrid_search_failed(
+                job_id=job_id,
+                stage="unknown",
+                exception_type=type(exc).__name__,
+                exception_message=str(exc),
+            )
+            raise
+
         # Build rank lookup for populating SearchResult metadata.
-        lexical_rank_map = {id_: rank for rank, id_ in enumerate(lexical_ids, 1)}
+        lexical_rank_map  = {id_: rank for rank, id_ in enumerate(lexical_ids, 1)}
         semantic_rank_map = {id_: rank for rank, id_ in enumerate(semantic_ids, 1)}
 
-        return [
+        results = [
             SearchResult(
                 candidate_id=candidate_id,
                 rrf_score=score,
@@ -162,6 +223,16 @@ class HybridSearchEngine:
             )
             for candidate_id, score in fused
         ]
+
+        total_ms = (time.perf_counter() - t_total) * 1000
+        audit_logger.log_hybrid_search_completed(
+            job_id=job_id,
+            results_count=len(results),
+            top_score=results[0].rrf_score if results else None,
+            latency_ms=total_ms,
+        )
+
+        return results
 
     # ------------------------------------------------------------------
     # Private — database queries

@@ -76,7 +76,16 @@ export default function JobIngestionModal({ open, onClose, onSuccess }) {
       handleClose();
     } catch (err) {
       if (err.body && typeof err.body === 'object') {
-        setErrors(err.body);
+        if (typeof err.body.detail === 'string') {
+          setServerErr(err.body.detail);
+        } else if (err.body.raw_markdown) {
+          setErrors(err.body);
+        } else {
+          // Backend returned field errors for parsed fields (title, description, etc.)
+          // that all stem from the markdown content — surface them under the textarea.
+          const firstMessage = Object.values(err.body).flat().find(Boolean);
+          setErrors({ raw_markdown: firstMessage || 'Validation error.' });
+        }
       } else {
         setServerErr(err.message || 'Failed to create job. Please try again.');
       }

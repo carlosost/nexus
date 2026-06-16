@@ -16,9 +16,7 @@
  */
 
 import { useState } from 'react';
-import JobIngestionModal  from '../JobIngestionModal.jsx';
 import DeleteConfirmModal from './DeleteConfirmModal.jsx';
-import { deleteJob }      from '../../api/client.js';
 
 function fmt(iso) {
   return iso ? new Date(iso).toLocaleDateString() : '—';
@@ -26,7 +24,6 @@ function fmt(iso) {
 
 export default function JobBoard({ jobs, loading, error, onAdd, onRemove }) {
   const [expanded,     setExpanded]     = useState(null);   // job id
-  const [creating,     setCreating]     = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);   // job object
 
   function toggleExpand(id) {
@@ -34,8 +31,7 @@ export default function JobBoard({ jobs, loading, error, onAdd, onRemove }) {
   }
 
   async function handleDelete() {
-    await deleteJob(deleteTarget.id);
-    onRemove(deleteTarget.id);
+    await onRemove(deleteTarget.id);
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -46,7 +42,7 @@ export default function JobBoard({ jobs, loading, error, onAdd, onRemove }) {
         <h2 className="admin-board__title">Jobs</h2>
         <button
           className="btn btn--primary btn--sm"
-          onClick={() => setCreating(true)}
+          onClick={() => onAdd()}
           data-testid="job-create-btn"
         >
           + Add Job
@@ -54,13 +50,13 @@ export default function JobBoard({ jobs, loading, error, onAdd, onRemove }) {
       </div>
 
       {loading && (
-        <div className="admin-board__placeholder" data-testid="job-board-loading">
+        <div className="admin-board__placeholder" data-testid="jobs-loading-skeleton">
           <span className="spinner" /> Loading jobs…
         </div>
       )}
 
       {!loading && error && (
-        <div className="admin-board__placeholder admin-board__placeholder--error" data-testid="job-board-error">
+        <div className="admin-board__placeholder admin-board__placeholder--error" role="alert" data-testid="job-board-error">
           Failed to load jobs. <button className="btn-link" onClick={() => window.location.reload()}>Retry</button>
         </div>
       )}
@@ -94,6 +90,7 @@ export default function JobBoard({ jobs, loading, error, onAdd, onRemove }) {
                       className="btn-link admin-table__expand-btn"
                       onClick={() => toggleExpand(job.id)}
                       aria-expanded={expanded === job.id}
+                      aria-label={`Expand ${job.title}`}
                       data-testid={`job-expand-${job.id}`}
                     >
                       <span className="admin-table__chevron">{expanded === job.id ? '▾' : '▸'}</span>
@@ -141,18 +138,12 @@ export default function JobBoard({ jobs, loading, error, onAdd, onRemove }) {
 
       {/* ── Modals ──────────────────────────────────────────────────────────── */}
 
-      <JobIngestionModal
-        open={creating}
-        onClose={() => setCreating(false)}
-        onSuccess={(job) => { onAdd(job); setCreating(false); }}
-      />
-
       <DeleteConfirmModal
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
         entityLabel={deleteTarget ? `"${deleteTarget.title}"` : ''}
-        warning="All Applications linked to this job will also be permanently deleted."
+        warning="This will also delete all Applications linked to this job."
       />
     </section>
   );

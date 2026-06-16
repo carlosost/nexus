@@ -19,7 +19,11 @@ Formula:
 from __future__ import annotations
 
 import math
+import time
 from typing import Optional
+
+from resume_pipeline.logging_module import audit_logger
+from resume_pipeline.observability import pipeline_observability
 
 
 # ---------------------------------------------------------------------------
@@ -114,34 +118,50 @@ def fuse_ranked_lists(
     Returns:
         List of (candidate_id, normalized_rrf_score) sorted by score descending.
     """
-    # Build rank maps (1-based, deduplicated — first occurrence wins).
-    lexical_ranks: dict[str, int] = {}
-    for i, candidate_id in enumerate(lexical_results, start=1):
-        if candidate_id not in lexical_ranks:
-            lexical_ranks[candidate_id] = i
+    t_start = time.perf_counter()
 
-    semantic_ranks: dict[str, int] = {}
-    for i, candidate_id in enumerate(semantic_results, start=1):
-        if candidate_id not in semantic_ranks:
-            semantic_ranks[candidate_id] = i
+    with pipeline_observability.timed("rrf_fusion"):
+        # Build rank maps (1-based, deduplicated — first occurrence wins).
+        lexical_ranks: dict[str, int] = {}
+        for i, candidate_id in enumerate(lexical_results, start=1):
+            if candidate_id not in lexical_ranks:
+                lexical_ranks[candidate_id] = i
 
-    # Union of all candidate IDs across both lists.
-    all_candidates = set(lexical_ranks) | set(semantic_ranks)
+        semantic_ranks: dict[str, int] = {}
+        for i, candidate_id in enumerate(semantic_results, start=1):
+            if candidate_id not in semantic_ranks:
+                semantic_ranks[candidate_id] = i
 
-    num_sources = (1 if lexical_results else 0) + (1 if semantic_results else 0)
+        # Union of all candidate IDs across both lists.
+        all_candidates = set(lexical_ranks) | set(semantic_ranks)
 
-    fused: list[tuple[str, float]] = []
-    for candidate_id in all_candidates:
-        raw = compute_rrf_score(
-            lexical_rank=lexical_ranks.get(candidate_id),
-            semantic_rank=semantic_ranks.get(candidate_id),
-            k=k,
-        )
-        norm = normalize_rrf_score(raw, k=k, num_sources=num_sources)
-        fused.append((candidate_id, norm))
+        num_sources = (1 if lexical_results else 0) + (1 if semantic_results else 0)
 
-    # Sort by score descending; tie-break by candidate_id for determinism.
-    fused.sort(key=lambda x: (-x[1], x[0]))
+        fused: list[tuple[str, float]] = []
+        for candidate_id in all_candidates:
+            raw = compute_rrf_score(
+                lexical_rank=lexical_ranks.get(candidate_id),
+                semantic_rank=semantic_ranks.get(candidate_id),
+                k=k,
+            )
+            norm = normalize_rrf_score(raw, k=k, num_sources=num_sources)
+            fused.append((candidate_id, norm))
+
+        # Sort by score descending; tie-break by candidate_id for determinism.
+        fused.sort(key=lambda x: (-x[1], x[0]))
+
+    latency_ms = (time.perf_counter() - t_start) * 1000
+    top_score = fused[0][1] if fused else None
+
+    audit_logger.log_rrf_fusion_done(
+        lexical_count=len(lexical_results),
+        semantic_count=len(semantic_results),
+        union_count=len(fused),
+        num_sources=num_sources,
+        top_score=top_score,
+        latency_ms=latency_ms,
+    )
+
     return fused
 
 

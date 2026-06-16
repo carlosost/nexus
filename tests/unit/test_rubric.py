@@ -486,21 +486,25 @@ class TestMakeRubricBackend:
         from resume_pipeline.pipeline.rubric_score import (
             make_rubric_backend,
             MockLLMBackend,
+            UnconfiguredLLMBackend,
             LLMBackendProtocol,
             OpenAIRubricBackend,
             AnthropicRubricBackend,
         )
         self.make_rubric_backend = make_rubric_backend
         self.MockLLMBackend = MockLLMBackend
+        self.UnconfiguredLLMBackend = UnconfiguredLLMBackend
         self.LLMBackendProtocol = LLMBackendProtocol
         self.OpenAIRubricBackend = OpenAIRubricBackend
         self.AnthropicRubricBackend = AnthropicRubricBackend
 
-    def test_mock_backend_returns_mock_llm(self):
+    def test_mock_backend_returns_unconfigured(self):
+        # "mock" is not a real provider — returns UnconfiguredLLMBackend so the
+        # server starts cleanly but raises a 503 at rubric call time.
         backend = self.make_rubric_backend("mock")
-        assert isinstance(backend, self.MockLLMBackend)
+        assert isinstance(backend, self.UnconfiguredLLMBackend)
 
-    def test_mock_backend_satisfies_protocol(self):
+    def test_unconfigured_backend_satisfies_protocol(self):
         backend = self.make_rubric_backend("mock")
         assert isinstance(backend, self.LLMBackendProtocol)
 
@@ -520,10 +524,10 @@ class TestMakeRubricBackend:
         backend = self.make_rubric_backend("anthropic")
         assert isinstance(backend, self.LLMBackendProtocol)
 
-    def test_default_falls_back_to_mock(self, monkeypatch):
+    def test_default_is_unconfigured_when_env_unset(self, monkeypatch):
         monkeypatch.delenv("LLM_BACKEND", raising=False)
         backend = self.make_rubric_backend()
-        assert isinstance(backend, self.MockLLMBackend)
+        assert isinstance(backend, self.UnconfiguredLLMBackend)
 
     def test_env_var_selects_openai(self, monkeypatch):
         monkeypatch.setenv("LLM_BACKEND", "openai")

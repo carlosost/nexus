@@ -48,11 +48,20 @@ FROM python:3.11-slim AS runtime
 RUN useradd --create-home --shell /bin/bash appuser
 
 # Runtime-only system deps:
-#   libpq5  — psycopg2 shared library
-#   curl    — Docker HEALTHCHECK probe
+#   libpq5      — psycopg2 shared library
+#   curl        — Docker HEALTHCHECK probe
+#   libreoffice — headless Word (.doc/.docx) → PDF conversion (`soffice`),
+#                 invoked by resume_pipeline/ingestion/word_converter.py.
+#                 No pure-Python library renders both legacy .doc and .docx
+#                 to PDF with real fidelity on Linux; this is the standard
+#                 free/open-source answer to that problem. It's a heavy
+#                 package (~500MB) — acceptable here since this is a
+#                 batch-processing backend image, not a latency-critical
+#                 microservice.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 \
         curl \
+        libreoffice \
     && rm -rf /var/lib/apt/lists/*
 
 # Pull the full Python package tree from the builder.

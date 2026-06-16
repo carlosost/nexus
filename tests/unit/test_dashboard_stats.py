@@ -54,7 +54,8 @@ def _call_view(
     total_apps:        int = 0,
     app_status_rows:   list[dict] | None = None,
     active_apps:       int = 0,
-    user_count:        int = 0,
+    candidate_count:   int = 0,
+    job_count:         int = 0,
     rubric_total:      int = 0,
     rubric_primary:    int = 0,
     funnel_completed:  int = 0,
@@ -77,7 +78,8 @@ def _call_view(
     with (
         patch("resume_pipeline.views.Application") as MockApp,
         patch("resume_pipeline.views.RubricScore") as MockRS,
-        patch("resume_pipeline.views.get_user_model") as MockGetUser,
+        patch("resume_pipeline.views.Candidate") as MockCandidate,
+        patch("resume_pipeline.views.Job") as MockJob,
         patch("resume_pipeline.views.timezone") as MockTZ,
     ):
         # ── Freeze time ──────────────────────────────────────────────────────
@@ -146,10 +148,9 @@ def _call_view(
         rs_qs.annotate.return_value.values.return_value.annotate.return_value = ts_rows
         MockRS.objects.filter.return_value = rs_qs
 
-        # ── User model mock ───────────────────────────────────────────────────
-        MockUser = MagicMock()
-        MockGetUser.return_value = MockUser
-        MockUser.objects.filter.return_value.count.return_value = user_count
+        # ── Candidate / Job mocks ─────────────────────────────────────────────
+        MockCandidate.objects.count.return_value = candidate_count
+        MockJob.objects.count.return_value = job_count
 
         # ── Call the view ─────────────────────────────────────────────────────
         from resume_pipeline.views import DashboardStatsView
@@ -180,10 +181,10 @@ class TestResponseShape:
     def test_has_llm_resilience_key(self):
         assert "llm_resilience" in _call_view().data
 
-    def test_totals_has_four_sub_keys(self):
+    def test_totals_has_five_sub_keys(self):
         totals = _call_view().data["totals"]
         assert set(totals.keys()) == {
-            "applications", "active_jobs", "workspace_users", "llm_success_rate"
+            "applications", "candidates", "jobs", "active_jobs", "llm_success_rate"
         }
 
     def test_llm_resilience_has_time_series_key(self):
@@ -212,13 +213,13 @@ class TestTotalsCalculation:
         resp = _call_view(total_apps=5, active_apps=0)
         assert resp.data["totals"]["active_jobs"] == 0
 
-    def test_workspace_users_count(self):
-        resp = _call_view(user_count=7)
-        assert resp.data["totals"]["workspace_users"] == 7
+    def test_candidate_count_reflects_total(self):
+        resp = _call_view(candidate_count=57)
+        assert resp.data["totals"]["candidates"] == 57
 
-    def test_workspace_users_zero_when_none(self):
-        resp = _call_view(user_count=0)
-        assert resp.data["totals"]["workspace_users"] == 0
+    def test_job_count_reflects_total(self):
+        resp = _call_view(job_count=12)
+        assert resp.data["totals"]["jobs"] == 12
 
 
 # ---------------------------------------------------------------------------

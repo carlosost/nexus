@@ -82,6 +82,20 @@ class AuditEventType(str, Enum):
     RUBRIC_RESPONSE_PARSED   = "rubric_response_parsed"
     RUBRIC_SCORED            = "rubric_scored"
     LLM_NOT_CONFIGURED       = "llm_not_configured"
+    # Job embedding events
+    JOB_EMBEDDING_STARTED      = "job_embedding_started"
+    JOB_EMBEDDING_SECTION_DONE = "job_embedding_section_done"
+    JOB_EMBEDDING_COMPLETED    = "job_embedding_completed"
+    JOB_EMBEDDING_FAILED       = "job_embedding_failed"
+    # Hybrid search events
+    HYBRID_SEARCH_STARTED   = "hybrid_search_started"
+    HYBRID_SEARCH_LEXICAL   = "hybrid_search_lexical"
+    HYBRID_SEARCH_SEMANTIC  = "hybrid_search_semantic"
+    HYBRID_SEARCH_FUSED     = "hybrid_search_fused"
+    HYBRID_SEARCH_COMPLETED = "hybrid_search_completed"
+    HYBRID_SEARCH_FAILED    = "hybrid_search_failed"
+    # RRF fusion events
+    RRF_FUSION_DONE = "rrf_fusion_done"
 
 
 # ---------------------------------------------------------------------------
@@ -864,6 +878,227 @@ class StructuredAuditLogger:
                 },
                 "llm_success_rate": llm_success_rate,
                 "latency_ms": latency_ms,
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # Hybrid search events
+    # ------------------------------------------------------------------
+
+    def log_hybrid_search_started(
+        self,
+        job_id: str,
+        query_text_len: int,
+        embedding_dim: int,
+        top_k: int,
+    ) -> None:
+        """Emitted at the start of HybridSearchEngine.search() before any query."""
+        self._emit(
+            event_type=AuditEventType.HYBRID_SEARCH_STARTED,
+            payload={
+                "job_id":          job_id,
+                "query_text_len":  query_text_len,
+                "embedding_dim":   embedding_dim,
+                "top_k":           top_k,
+            },
+        )
+
+    def log_hybrid_search_lexical(
+        self,
+        job_id: str,
+        results_count: int,
+        latency_ms: float,
+    ) -> None:
+        """Emitted after the PostgreSQL FTS query returns."""
+        self._emit(
+            event_type=AuditEventType.HYBRID_SEARCH_LEXICAL,
+            payload={
+                "job_id":        job_id,
+                "results_count": results_count,
+                "latency_ms":    round(latency_ms, 3),
+            },
+        )
+
+    def log_hybrid_search_semantic(
+        self,
+        job_id: str,
+        section: str,
+        results_count: int,
+        latency_ms: float,
+    ) -> None:
+        """Emitted after the pgvector cosine similarity query returns."""
+        self._emit(
+            event_type=AuditEventType.HYBRID_SEARCH_SEMANTIC,
+            payload={
+                "job_id":        job_id,
+                "section":       section,
+                "results_count": results_count,
+                "latency_ms":    round(latency_ms, 3),
+            },
+        )
+
+    def log_hybrid_search_fused(
+        self,
+        job_id: str,
+        lexical_count: int,
+        semantic_count: int,
+        fused_count: int,
+        top_score: Optional[float],
+        num_sources: int,
+        latency_ms: float,
+    ) -> None:
+        """Emitted after RRF fusion completes, before building SearchResult objects."""
+        self._emit(
+            event_type=AuditEventType.HYBRID_SEARCH_FUSED,
+            payload={
+                "job_id":        job_id,
+                "lexical_count": lexical_count,
+                "semantic_count": semantic_count,
+                "fused_count":   fused_count,
+                "top_score":     round(top_score, 6) if top_score is not None else None,
+                "num_sources":   num_sources,
+                "latency_ms":    round(latency_ms, 3),
+            },
+        )
+
+    def log_hybrid_search_completed(
+        self,
+        job_id: str,
+        results_count: int,
+        top_score: Optional[float],
+        latency_ms: float,
+    ) -> None:
+        """Emitted after search() returns its ranked list."""
+        self._emit(
+            event_type=AuditEventType.HYBRID_SEARCH_COMPLETED,
+            payload={
+                "job_id":        job_id,
+                "results_count": results_count,
+                "top_score":     round(top_score, 6) if top_score is not None else None,
+                "latency_ms":    round(latency_ms, 3),
+            },
+        )
+
+    def log_hybrid_search_failed(
+        self,
+        job_id: str,
+        stage: str,
+        exception_type: str,
+        exception_message: str,
+    ) -> None:
+        """Emitted when an exception escapes any stage of HybridSearchEngine.search()."""
+        self._emit(
+            event_type=AuditEventType.HYBRID_SEARCH_FAILED,
+            payload={
+                "job_id":            job_id,
+                "stage":             stage,
+                "exception_type":    exception_type,
+                "exception_message": exception_message,
+            },
+        )
+
+    def log_rrf_fusion_done(
+        self,
+        lexical_count: int,
+        semantic_count: int,
+        union_count: int,
+        num_sources: int,
+        top_score: Optional[float],
+        latency_ms: float,
+    ) -> None:
+        """Emitted by fuse_ranked_lists() after scoring and sorting the union set."""
+        self._emit(
+            event_type=AuditEventType.RRF_FUSION_DONE,
+            payload={
+                "lexical_count":  lexical_count,
+                "semantic_count": semantic_count,
+                "union_count":    union_count,
+                "num_sources":    num_sources,
+                "top_score":      round(top_score, 6) if top_score is not None else None,
+                "latency_ms":     round(latency_ms, 3),
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # Job embedding events
+    # ------------------------------------------------------------------
+
+    def log_job_embedding_started(
+        self,
+        job_id: str,
+        job_title: str,
+        sections: list[str],
+        backend: str,
+    ) -> None:
+        """Emitted at the start of embed_job_sections() before any API call."""
+        self._emit(
+            event_type=AuditEventType.JOB_EMBEDDING_STARTED,
+            payload={
+                "job_id":        job_id,
+                "job_title":     job_title,
+                "sections":      sections,
+                "section_count": len(sections),
+                "backend":       backend,
+            },
+        )
+
+    def log_job_embedding_section_done(
+        self,
+        job_id: str,
+        section: str,
+        text_len: int,
+        vector_dim: int,
+        vector_norm: float,
+        is_new: bool,
+        latency_ms: float,
+    ) -> None:
+        """Emitted after each section's embedding is computed and persisted."""
+        self._emit(
+            event_type=AuditEventType.JOB_EMBEDDING_SECTION_DONE,
+            payload={
+                "job_id":      job_id,
+                "section":     section,
+                "text_len":    text_len,
+                "vector_dim":  vector_dim,
+                "vector_norm": round(vector_norm, 6),
+                "is_new":      is_new,
+                "latency_ms":  round(latency_ms, 3),
+            },
+        )
+
+    def log_job_embedding_completed(
+        self,
+        job_id: str,
+        sections_count: int,
+        backend: str,
+        latency_ms: float,
+    ) -> None:
+        """Emitted after all sections are embedded and persisted successfully."""
+        self._emit(
+            event_type=AuditEventType.JOB_EMBEDDING_COMPLETED,
+            payload={
+                "job_id":         job_id,
+                "sections_count": sections_count,
+                "backend":        backend,
+                "latency_ms":     round(latency_ms, 3),
+            },
+        )
+
+    def log_job_embedding_failed(
+        self,
+        job_id: str,
+        section: str,
+        exception_type: str,
+        exception_message: str,
+    ) -> None:
+        """Emitted when an exception escapes embed_job_sections() for a given section."""
+        self._emit(
+            event_type=AuditEventType.JOB_EMBEDDING_FAILED,
+            payload={
+                "job_id":            job_id,
+                "section":           section,
+                "exception_type":    exception_type,
+                "exception_message": exception_message,
             },
         )
 

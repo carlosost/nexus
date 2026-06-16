@@ -40,6 +40,11 @@ from django.db import IntegrityError
 
 from resume_pipeline.ingestion.job_parser import JobParseError, parse_job_markdown
 from resume_pipeline.ingestion.parser import ResumeParser
+from resume_pipeline.ingestion.word_converter import (
+    WordConversionError,
+    convert_word_to_pdf,
+    is_word_document,
+)
 from resume_pipeline.pipeline.rubric_score import LLMBackendNotConfiguredError
 from resume_pipeline.models import Application, Candidate, FinalScore, HumanReview, Job, RubricScore
 from resume_pipeline.pipeline.job_embedder import embed_job_sections
@@ -147,12 +152,19 @@ class JobListCreateView(APIView):
 class CandidateListCreateView(APIView):
     """
     GET  /api/candidates/  → list of all candidates (id, name, email, created_at)
-    POST /api/candidates/  → create a candidate from a PDF resume upload
+    POST /api/candidates/  → create a candidate from a resume upload
 
     POST body (multipart/form-data):
         name        string
         email       string
-        resume_pdf  file   (PDF, max 10 MB)
+        resume_pdf  file   (PDF, .doc, or .docx — max 10 MB)
+
+    Word uploads (.doc / .docx) are converted to PDF server-side via
+    LibreOffice headless (resume_pipeline.ingestion.word_converter) before
+    being handed to ResumeParser — the parsing stage is unchanged and stays
+    PDF-only. A conversion failure (corrupt file, timeout) surfaces as a 400
+    with a field-level error on resume_pdf, same shape as any other
+    validation error.
     """
 
     parser_classes = [JSONParser, MultiPartParser]
@@ -175,7 +187,23 @@ class CandidateListCreateView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         validated = serializer.validated_data
-        pdf_bytes = validated["resume_pdf"].read()
+        upload = validated["resume_pdf"]
+        pdf_bytes = upload.read()
+
+        if is_word_document(upload):
+            with pipeline_observability.timed("candidate_word_to_pdf_conversion"):
+                try:
+                    pdf_bytes = convert_word_to_pdf(pdf_bytes, upload.name)
+                except WordConversionError as exc:
+                    audit_logger.log_candidate_create_failed(
+                        "word_conversion_failed",
+                        field_key="resume_pdf",
+                        detail=str(exc),
+                    )
+                    return Response(
+                        {"resume_pdf": [str(exc)]},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
         with pipeline_observability.timed("candidate_pdf_parse"):
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:

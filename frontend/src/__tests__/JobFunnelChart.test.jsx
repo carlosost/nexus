@@ -9,9 +9,22 @@
  *   Given data with labels → labels are accessible in the DOM (YAxis)
  */
 
-import { describe, test, expect, beforeAll } from 'vitest';
+import { describe, test, expect, beforeAll, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import JobFunnelChart from '../components/JobFunnelChart.jsx';
+
+vi.mock('recharts', async () => {
+  const actual = await vi.importActual('recharts');
+  const { cloneElement } = await import('react');
+  return {
+    ...actual,
+    ResponsiveContainer: ({ children, width = 800, height = 300 }) => (
+      <div className="recharts-responsive-container" style={{ width, height }}>
+        {cloneElement(children, { width: 800, height: 300 })}
+      </div>
+    ),
+  };
+});
 
 beforeAll(() => {
   global.ResizeObserver = class {

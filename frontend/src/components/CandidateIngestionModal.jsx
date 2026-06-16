@@ -1,11 +1,16 @@
 /**
- * CandidateIngestionModal — create a new Candidate from a PDF resume upload.
+ * CandidateIngestionModal — create a new Candidate from a resume upload
+ * (PDF, or Word — .doc / .docx).
  *
- * Submits multipart/form-data to POST /api/candidates/.
+ * Submits multipart/form-data to POST /api/candidates/. Word uploads are
+ * converted to PDF server-side (LibreOffice headless) before parsing — the
+ * client only needs to gate on file type and size, exactly as it already
+ * does for PDF.
+ *
  * Client-side validation gates:
  *   - name and email required
  *   - email format check
- *   - file must be a PDF and ≤ 10 MB
+ *   - file must be a PDF, .doc, or .docx and ≤ 10 MB
  *
  * Props:
  *   open      {boolean}
@@ -18,6 +23,21 @@ import Modal from './Modal.jsx';
 import { createCandidate } from '../api/client.js';
 
 const EMPTY = { name: '', email: '', file: null };
+
+const ACCEPTED_EXTENSIONS = ['.pdf', '.doc', '.docx'];
+const ACCEPTED_CONTENT_TYPES = [
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+];
+
+function isAcceptedResumeFile(file) {
+  const nameLower = file.name.toLowerCase();
+  return (
+    ACCEPTED_EXTENSIONS.some((ext) => nameLower.endsWith(ext)) ||
+    ACCEPTED_CONTENT_TYPES.includes(file.type)
+  );
+}
 
 function fieldError(errors, key) {
   const val = errors?.[key];
@@ -46,10 +66,9 @@ export default function CandidateIngestionModal({ open, onClose, onSuccess }) {
     if (!form.email.trim()) e.email = 'Email address is required.';
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
       e.email = 'Enter a valid email address.';
-    if (!form.file)         e.resume_pdf = 'Please select a PDF resume.';
-    else if (!form.file.name.toLowerCase().endsWith('.pdf') &&
-             form.file.type !== 'application/pdf')
-      e.resume_pdf = 'Only PDF files are accepted.';
+    if (!form.file)         e.resume_pdf = 'Please select a resume file.';
+    else if (!isAcceptedResumeFile(form.file))
+      e.resume_pdf = 'Only PDF or Word (.doc, .docx) files are accepted.';
     else if (form.file.size > 10 * 1024 * 1024)
       e.resume_pdf = 'File must be smaller than 10 MB.';
     return e;
@@ -128,14 +147,14 @@ export default function CandidateIngestionModal({ open, onClose, onSuccess }) {
 
         <div className="form-field">
           <label htmlFor="cand-pdf" className="form-label">
-            Resume PDF <span aria-hidden="true">*</span>
+            Resume (PDF or Word) <span aria-hidden="true">*</span>
           </label>
           <div className={`file-drop${fieldError(errors, 'resume_pdf') ? ' file-drop--error' : ''}`}>
             <input
               id="cand-pdf"
               ref={fileInputRef}
               type="file"
-              accept=".pdf,application/pdf"
+              accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
               className="file-drop__input"
               onChange={(e) => setForm({ ...form, file: e.target.files[0] ?? null })}
               disabled={submitting}
@@ -143,7 +162,7 @@ export default function CandidateIngestionModal({ open, onClose, onSuccess }) {
             <label htmlFor="cand-pdf" className="file-drop__label">
               {form.file
                 ? <><strong>{form.file.name}</strong> ({(form.file.size / 1024).toFixed(0)} KB)</>
-                : <>Click to choose or drag a PDF here</>
+                : <>Click to choose or drag a PDF or Word document here</>
               }
             </label>
           </div>

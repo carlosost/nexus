@@ -9,7 +9,7 @@
  * Scenario 1: Dashboard loads and metric cards display backend values
  *   Given the stats API returns a valid payload
  *   When  the user navigates to /
- *   Then  all 4 metric cards are visible
+ *   Then  all 5 metric cards are visible
  *   And   each card displays the value from the API response
  *
  * Scenario 2: Stats API error — error banner shown with retry button
@@ -70,15 +70,16 @@ const APPLICATIONS = [
 
 function makeStats({
   applications     = 142,
+  candidates       = 37,
+  jobs             = 5,
   active_jobs      = 18,
-  workspace_users  = 9,
   llm_success_rate = 94.2,
   statusDist       = [],
   funnelData       = [],
   timeSeries       = [],
 } = {}) {
   return {
-    totals: { applications, active_jobs, workspace_users, llm_success_rate },
+    totals: { applications, candidates, jobs, active_jobs, llm_success_rate },
     application_status_distribution: statusDist,
     job_execution_funnel: funnelData,
     llm_resilience: { time_series: timeSeries },
@@ -106,27 +107,30 @@ async function mockDashboardApis(page, {
 // Scenario 1: Metric cards display backend values
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('Given stats API resolves, When dashboard loads, Then 4 metric cards show API values', async ({ page }) => {
+test('Given stats API resolves, When dashboard loads, Then 5 metric cards show API values', async ({ page }) => {
   await mockDashboardApis(page, {
     stats: makeStats({
       applications:     142,
+      candidates:       37,
+      jobs:             5,
       active_jobs:      18,
-      workspace_users:  9,
       llm_success_rate: 94.2,
     }),
   });
 
   await page.goto('/');
 
-  // All 4 metric-card containers are visible
+  // All 5 metric-card containers are visible
+  // Card order: Total Applications | Candidates | Jobs | Active In Pipeline | LLM Success Rate
   const cards = page.locator('.metric-card');
-  await expect(cards).toHaveCount(4);
+  await expect(cards).toHaveCount(5);
 
   // Values match what the API returned
   await expect(page.locator('.metric-card__value').nth(0)).toContainText('142');
-  await expect(page.locator('.metric-card__value').nth(1)).toContainText('18');
-  await expect(page.locator('.metric-card__value').nth(2)).toContainText('9');
-  await expect(page.locator('.metric-card__value').nth(3)).toContainText('94.2%');
+  await expect(page.locator('.metric-card__value').nth(1)).toContainText('37');
+  await expect(page.locator('.metric-card__value').nth(2)).toContainText('5');
+  await expect(page.locator('.metric-card__value').nth(3)).toContainText('18');
+  await expect(page.locator('.metric-card__value').nth(4)).toContainText('94.2%');
 });
 
 test('Given large application count, Then value is formatted with locale separators', async ({ page }) => {
@@ -152,7 +156,7 @@ test('Given stats API fails, Then ApplicationTable is still rendered', async ({ 
   await mockDashboardApis(page, { statsStatus: 500 });
   await page.goto('/');
   // The error in stats section must not block the application table
-  await expect(page.locator('.application-table, [data-testid="app-table"]').first()).toBeVisible();
+  await expect(page.locator('[data-testid="application-table"]')).toBeVisible();
 });
 
 test('Given stats API fails, Then error banner contains retry button', async ({ page }) => {
@@ -167,23 +171,25 @@ test('Given stats API fails, Then error banner contains retry button', async ({ 
 // ─────────────────────────────────────────────────────────────────────────────
 
 test('Given stats fails then succeeds, When user clicks Retry, Then cards appear and error is gone', async ({ page }) => {
-  let callCount = 0;
+  // Keep erroring on ALL calls (not just the first) so the banner stays visible
+  // regardless of how many background refetches fire before the test clicks Retry.
+  const errorRoute = (r) =>
+    r.fulfill({ status: 500, json: { detail: 'Temporary error' } });
 
   await page.route('**/api/applications/', (r) => r.fulfill({ json: [] }));
-  await page.route('**/api/dashboard/stats/', (r) => {
-    callCount++;
-    if (callCount === 1) {
-      return r.fulfill({ status: 500, json: { detail: 'Temporary error' } });
-    }
-    return r.fulfill({ json: makeStats({ applications: 99 }) });
-  });
+  await page.route('**/api/dashboard/stats/', errorRoute);
 
   await page.goto('/');
 
-  // Error banner present after first (failed) call
+  // Error banner is visible
   await expect(page.locator('.stats-error')).toBeVisible();
 
-  // Click Retry
+  // Swap to the success route BEFORE clicking Retry so the next call resolves.
+  await page.unroute('**/api/dashboard/stats/', errorRoute);
+  await page.route('**/api/dashboard/stats/', (r) =>
+    r.fulfill({ json: makeStats({ applications: 99 }) })
+  );
+
   await page.locator('.stats-error').getByRole('button', { name: /retry/i }).click();
 
   // Error banner disappears, metric card with value 99 appears
@@ -246,22 +252,22 @@ test('Given LLM time series is all zero, Then resilience chart shows "no LLM cal
 test('Given llm_success_rate >= 90, Then LLM card has success color', async ({ page }) => {
   await mockDashboardApis(page, { stats: makeStats({ llm_success_rate: 95.0 }) });
   await page.goto('/');
-  const llmCard = page.locator('.metric-card').nth(3);
-  await expect(llmCard).toHaveCSS('--metric-color', /color-success/);
+  const llmCard = page.locator('.metric-card').filter({ hasText: 'LLM Success Rate' });
+  await expect(llmCard).toHaveAttribute('data-color', 'success');
 });
 
 test('Given llm_success_rate between 70 and 90, Then LLM card has warning color', async ({ page }) => {
   await mockDashboardApis(page, { stats: makeStats({ llm_success_rate: 75.0 }) });
   await page.goto('/');
-  const llmCard = page.locator('.metric-card').nth(3);
-  await expect(llmCard).toHaveCSS('--metric-color', /color-warning/);
+  const llmCard = page.locator('.metric-card').filter({ hasText: 'LLM Success Rate' });
+  await expect(llmCard).toHaveAttribute('data-color', 'warning');
 });
 
 test('Given llm_success_rate below 70, Then LLM card has danger color', async ({ page }) => {
   await mockDashboardApis(page, { stats: makeStats({ llm_success_rate: 60.0 }) });
   await page.goto('/');
-  const llmCard = page.locator('.metric-card').nth(3);
-  await expect(llmCard).toHaveCSS('--metric-color', /color-danger/);
+  const llmCard = page.locator('.metric-card').filter({ hasText: 'LLM Success Rate' });
+  await expect(llmCard).toHaveAttribute('data-color', 'danger');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

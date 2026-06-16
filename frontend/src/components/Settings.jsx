@@ -18,6 +18,8 @@ import { useCandidates } from '../hooks/useCandidates.js';
 import JobBoard           from './settings/JobBoard.jsx';
 import CandidateBoard     from './settings/CandidateBoard.jsx';
 import ApplicationCenter  from './settings/ApplicationCenter.jsx';
+import JobIngestionModal  from './JobIngestionModal.jsx';
+import { deleteJob }      from '../api/client.js';
 import '../styles/settings.css';
 
 const TABS = [
@@ -27,7 +29,8 @@ const TABS = [
 ];
 
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState('jobs');
+  const [activeTab,   setActiveTab]   = useState('jobs');
+  const [creatingJob, setCreatingJob] = useState(false);
 
   const {
     jobs,
@@ -88,8 +91,8 @@ export default function Settings() {
           jobs={jobs}
           loading={jobsLoading}
           error={jobsError}
-          onAdd={addJob}
-          onRemove={removeJob}
+          onAdd={() => setCreatingJob(true)}
+          onRemove={async (id) => { await deleteJob(id); removeJob(id); }}
         />
       </div>
 
@@ -124,6 +127,11 @@ export default function Settings() {
           onSuccess={() => {/* navigation to dashboard handled inside component */}}
         />
       </div>
+      <JobIngestionModal
+        open={creatingJob}
+        onClose={() => setCreatingJob(false)}
+        onSuccess={(job) => { addJob(job); setCreatingJob(false); }}
+      />
     </div>
   );
 }

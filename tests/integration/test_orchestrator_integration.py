@@ -35,6 +35,7 @@ from resume_pipeline.pipeline.rubric_score import (
     MockLLMBackend,
     RubricEvaluator,
     RubricScoreResponse,
+    UnconfiguredLLMBackend,
     make_rubric_backend,
     build_llm_response,
 )
@@ -321,13 +322,13 @@ class TestOrchestratorDefaultRubricBackend:
         )
         assert not isinstance(orchestrator._rubric, StubRubricEvaluator)
 
-    def test_default_backend_is_mock_when_env_unset(self, monkeypatch):
+    def test_default_backend_is_unconfigured_when_env_unset(self, monkeypatch):
         monkeypatch.delenv("LLM_BACKEND", raising=False)
         orchestrator = PipelineOrchestrator(
             semantic_evaluator=_mock_semantic_evaluator(),
         )
-        # _rubric._llm should be a MockLLMBackend when env var is unset
-        assert isinstance(orchestrator._rubric._llm, MockLLMBackend)
+        # No real LLM configured → UnconfiguredLLMBackend (raises 503 at call time)
+        assert isinstance(orchestrator._rubric._llm, UnconfiguredLLMBackend)
 
 
 # ---------------------------------------------------------------------------

@@ -76,6 +76,7 @@ export default function DeleteConfirmModal({
           className="btn btn--danger"
           onClick={handleConfirm}
           disabled={deleting}
+          aria-label="Confirm"
           data-testid="delete-confirm-btn"
         >
           {deleting ? 'Deleting…' : 'Delete'}
