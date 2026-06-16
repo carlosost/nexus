@@ -2,9 +2,9 @@
 
 **Stop screening resumes by gut feeling. Score them with a pipeline you can audit.**
 
-Elvex Nexus turns a job description and a stack of PDF resumes into ranked, explainable candidate scores — hard-gate filtering, semantic similarity, LLM-based rubric scoring, and a human-in-the-loop review layer, all wired into one Django + React stack you can run with a single command.
+Elvex Nexus turns a job description and a stack of PDF, DOC or DOCX resumes into ranked, explainable candidate scores — hard-gate filtering, semantic similarity, LLM-based rubric scoring, and a human-in-the-loop review layer, all wired into one Django + React stack you can run with a single command.
 
-> No API keys, no cloud account, no setup ceremony required to get started. `docker compose up --build` boots a fully working pipeline against a deterministic mock LLM backend. Plug in OpenAI or Anthropic when you're ready for real scoring.
+> In advance, two very important information: Section "Quick Start" bellow has instructions to run the application with real LLM conectivity. Documentation "ARCHITECTURE_DECISIONS.md" has a template of Job Description to be used to create new Jobs.
 
 ---
 
