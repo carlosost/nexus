@@ -131,12 +131,12 @@ class PipelineOrchestrator:
     Executes the 4-stage pipeline for a single candidate-job application.
 
     Args:
-        gate_evaluator:    Stage 1. Defaults to HardGateEvaluator().
+        gate_evaluator:     Stage 1. Defaults to HardGateEvaluator().
         semantic_evaluator: Stage 2. Defaults to SemanticMatchEvaluator().
-        rubric_evaluator:  Stage 3. Any object satisfying RubricEvaluatorProtocol.
-                           Defaults to StubRubricEvaluator() until M3 is complete.
-        final_score_calc:  Stage 4. Defaults to FinalScoreCalculator().
-        observability:     Latency tracking. Defaults to process-level singleton.
+        rubric_evaluator:   Stage 3. Any object satisfying RubricEvaluatorProtocol.
+                            Defaults to StubRubricEvaluator() until M3 is complete.
+        final_score_calc:   Stage 4. Defaults to FinalScoreCalculator().
+        observability:      Latency tracking. Defaults to process-level singleton.
     """
 
     def __init__(

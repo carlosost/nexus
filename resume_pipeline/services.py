@@ -13,6 +13,7 @@ ReviewService status transition table:
 
 from __future__ import annotations
 
+import math
 import os
 
 from rest_framework.exceptions import ValidationError
@@ -20,6 +21,7 @@ from rest_framework.exceptions import ValidationError
 from resume_pipeline.embeddings import EmbeddingClient, MockEmbeddingBackend
 from resume_pipeline.logging_module import audit_logger
 from resume_pipeline.observability import pipeline_observability
+from resume_pipeline.pipeline.rubric_score import LLMBackendNotConfiguredError
 from resume_pipeline.models import (
     Application,
     FinalScore,
@@ -78,24 +80,68 @@ class PipelineService:
             candidate_id=str(application.candidate_id),
         )
 
-        with pipeline_observability.timed("pipeline_embedding_build", application_id=application_id):
-            candidate_embeddings = {
-                s: self._embedding_client.embed(str(candidate.resume_parsed[s]))
-                for s in _SECTIONS
-                if candidate.resume_parsed.get(s)
-            }
-            job_embeddings = {
-                s: self._embedding_client.embed(str(job.requirements_raw.get(s, job.description)))
-                for s in _SECTIONS
-                if job.requirements_raw.get(s) or job.description
-            }
+        # ── Log raw input shape before any computation ────────────────────────
+        resume_sections_chars = {
+            s: len(str(candidate.resume_parsed[s]))
+            for s in candidate.resume_parsed
+            if candidate.resume_parsed.get(s)
+        }
+        job_req_keys_chars = {
+            k: len(str(v))
+            for k, v in job.requirements_raw.items()
+        } if job.requirements_raw else {}
+
+        audit_logger.log_pipeline_input_prepared(
+            application_id=application_id,
+            job_title=job.title,
+            resume_sections=resume_sections_chars,
+            job_requirement_keys=job_req_keys_chars,
+            must_haves_count=len(job.must_haves) if job.must_haves else 0,
+        )
+
+        # ── Embedding build ───────────────────────────────────────────────────
+        try:
+            with pipeline_observability.timed("pipeline_embedding_build", application_id=application_id):
+                candidate_embeddings = {
+                    s: self._embedding_client.embed(str(candidate.resume_parsed[s]))
+                    for s in _SECTIONS
+                    if candidate.resume_parsed.get(s)
+                }
+                job_embeddings = {
+                    s: self._embedding_client.embed(str(job.requirements_raw.get(s, job.description)))
+                    for s in _SECTIONS
+                    if job.requirements_raw.get(s) or job.description
+                }
+        except Exception as exc:
+            audit_logger.log_pipeline_exception(
+                application_id=application_id,
+                stage="embedding_build",
+                exception_type=type(exc).__name__,
+                exception_message=str(exc),
+            )
+            raise
 
         first_vec = next(iter(candidate_embeddings.values()), None)
+        first_vec_dim  = len(first_vec) if first_vec is not None else 0
+        first_vec_norm = math.sqrt(sum(x * x for x in first_vec)) if first_vec else 0.0
+        first_vec_sample = first_vec[:5] if first_vec else []
+
+        def _norm(v: list[float]) -> float:
+            return round(math.sqrt(sum(x * x for x in v)), 6)
+
         audit_logger.log_pipeline_embeddings_built(
             application_id=application_id,
             candidate_sections=list(candidate_embeddings.keys()),
             job_sections=list(job_embeddings.keys()),
-            embedding_dim=len(first_vec) if first_vec is not None else 0,
+            embedding_dim=first_vec_dim,
+        )
+        audit_logger.log_pipeline_embedding_stats(
+            application_id=application_id,
+            candidate_section_norms={s: _norm(v) for s, v in candidate_embeddings.items()},
+            job_section_norms={s: _norm(v) for s, v in job_embeddings.items()},
+            first_vec_dim=first_vec_dim,
+            first_vec_norm=first_vec_norm,
+            first_vec_sample=first_vec_sample,
         )
 
         pipeline_input = PipelineInput(
@@ -109,8 +155,25 @@ class PipelineService:
             job_requirements=job.requirements_raw,
         )
 
-        with pipeline_observability.timed("pipeline_orchestrator_run", application_id=application_id):
-            result = self._orchestrator.run(pipeline_input)
+        # ── Orchestrator run ──────────────────────────────────────────────────
+        try:
+            with pipeline_observability.timed("pipeline_orchestrator_run", application_id=application_id):
+                result = self._orchestrator.run(pipeline_input)
+        except LLMBackendNotConfiguredError as exc:
+            audit_logger.log_llm_not_configured(
+                configured_backend=os.environ.get("LLM_BACKEND", "mock"),
+                application_id=application_id,
+                message=str(exc),
+            )
+            raise
+        except Exception as exc:
+            audit_logger.log_pipeline_exception(
+                application_id=application_id,
+                stage="orchestrator_run",
+                exception_type=type(exc).__name__,
+                exception_message=str(exc),
+            )
+            raise
 
         audit_logger.log_pipeline_gate_result(
             application_id=application_id,
@@ -153,8 +216,18 @@ class PipelineService:
             model_name=os.environ.get("LLM_BACKEND", "mock"),
         )
 
-        with pipeline_observability.timed("pipeline_persist", application_id=application_id):
-            self._persist(application, result)
+        # ── Persist ───────────────────────────────────────────────────────────
+        try:
+            with pipeline_observability.timed("pipeline_persist", application_id=application_id):
+                self._persist(application, result)
+        except Exception as exc:
+            audit_logger.log_pipeline_exception(
+                application_id=application_id,
+                stage="persist",
+                exception_type=type(exc).__name__,
+                exception_message=str(exc),
+            )
+            raise
 
         audit_logger.log_pipeline_persisted(
             application_id=application_id,

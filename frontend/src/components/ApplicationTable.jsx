@@ -13,6 +13,7 @@
  *   applications   {ApplicationRow[]}
  *   selected       {Set<string>}          currently checked IDs
  *   pollingIds     {Set<string>}          IDs whose run is in flight
+ *   runErrors      {Map<string, string>}  IDs whose last run failed → error message
  *   onToggle       {(id: string) => void}
  *   onToggleAll    {() => void}
  *   loading        {boolean}
@@ -37,6 +38,7 @@ export default function ApplicationTable({
   applications,
   selected,
   pollingIds,
+  runErrors,
   onToggle,
   onToggleAll,
   onReview,
@@ -100,16 +102,18 @@ export default function ApplicationTable({
 
         <tbody>
           {applications.map((app) => {
-            const isPolling = pollingIds.has(app.id);
-            const isChecked = selected.has(app.id);
+            const isPolling  = pollingIds.has(app.id);
+            const isChecked  = selected.has(app.id);
+            const runError   = runErrors?.get(app.id) ?? null;
 
             return (
               <tr
                 key={app.id}
                 className={[
                   'app-table__row',
-                  isPolling  ? 'app-table__row--polling'  : '',
-                  isChecked  ? 'app-table__row--selected' : '',
+                  isPolling ? 'app-table__row--polling'  : '',
+                  runError  ? 'app-table__row--error'    : '',
+                  isChecked ? 'app-table__row--selected' : '',
                 ].join(' ').trim()}
                 data-testid="app-row"
               >
@@ -132,6 +136,14 @@ export default function ApplicationTable({
 
                 <td>
                   <StatusBadge status={isPolling ? 'processing' : app.status} />
+                  {runError && (
+                    <span
+                      className="app-table__run-error"
+                      data-tooltip={runError}
+                    >
+                      ⚠ Run failed
+                    </span>
+                  )}
                 </td>
 
                 <td className="app-table__score">

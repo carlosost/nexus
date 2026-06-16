@@ -68,16 +68,20 @@ class AuditEventType(str, Enum):
     DASHBOARD_STATS_FETCHED = "dashboard_stats_fetched"
     # Pipeline internals — step-level trace events
     PIPELINE_SERVICE_INIT     = "pipeline_service_init"
+    PIPELINE_INPUT_PREPARED   = "pipeline_input_prepared"
     PIPELINE_EMBEDDINGS_BUILT = "pipeline_embeddings_built"
+    PIPELINE_EMBEDDING_STATS  = "pipeline_embedding_stats"
     PIPELINE_GATE_RESULT      = "pipeline_gate_result"
     PIPELINE_SEMANTIC_RESULT  = "pipeline_semantic_result"
     PIPELINE_RUBRIC_RESULT    = "pipeline_rubric_result"
     PIPELINE_PERSISTED        = "pipeline_persisted"
+    PIPELINE_EXCEPTION        = "pipeline_exception"
     # RubricEvaluator internals
     RUBRIC_LLM_CALL_STARTED  = "rubric_llm_call_started"
     RUBRIC_LLM_CALL_FINISHED = "rubric_llm_call_finished"
     RUBRIC_RESPONSE_PARSED   = "rubric_response_parsed"
     RUBRIC_SCORED            = "rubric_scored"
+    LLM_NOT_CONFIGURED       = "llm_not_configured"
 
 
 # ---------------------------------------------------------------------------
@@ -555,6 +559,67 @@ class StructuredAuditLogger:
     # Pipeline internals — step-level trace events
     # ------------------------------------------------------------------
 
+    def log_pipeline_input_prepared(
+        self,
+        application_id: str,
+        job_title: str,
+        resume_sections: dict[str, int],
+        job_requirement_keys: dict[str, int],
+        must_haves_count: int,
+    ) -> None:
+        """Emitted after candidate and job data are resolved, before embedding."""
+        self._emit(
+            event_type=AuditEventType.PIPELINE_INPUT_PREPARED,
+            payload={
+                "application_id":      application_id,
+                "job_title":           job_title,
+                "resume_sections":     resume_sections,
+                "resume_section_count": len(resume_sections),
+                "job_requirement_keys": job_requirement_keys,
+                "must_haves_count":    must_haves_count,
+            },
+        )
+
+    def log_pipeline_embedding_stats(
+        self,
+        application_id: str,
+        candidate_section_norms: dict[str, float],
+        job_section_norms: dict[str, float],
+        first_vec_dim: int,
+        first_vec_norm: float,
+        first_vec_sample: list[float],
+    ) -> None:
+        """Emitted after embeddings are built with per-section L2 norms and a vector sample."""
+        self._emit(
+            event_type=AuditEventType.PIPELINE_EMBEDDING_STATS,
+            payload={
+                "application_id":          application_id,
+                "candidate_section_norms": candidate_section_norms,
+                "job_section_norms":       job_section_norms,
+                "first_vec_dim":           first_vec_dim,
+                "first_vec_norm":          round(first_vec_norm, 6),
+                "first_vec_sample":        [round(v, 6) for v in first_vec_sample],
+            },
+        )
+
+    def log_pipeline_exception(
+        self,
+        application_id: str,
+        stage: str,
+        exception_type: str,
+        exception_message: str,
+    ) -> None:
+        """Emitted whenever an unexpected exception escapes a pipeline stage."""
+        self._emit(
+            event_type=AuditEventType.PIPELINE_EXCEPTION,
+            payload={
+                "application_id":   application_id,
+                "stage":            stage,
+                "exception_type":   exception_type,
+                "exception_message": exception_message,
+            },
+        )
+
     def log_pipeline_service_init(
         self,
         orchestrator_type: str,
@@ -732,6 +797,22 @@ class StructuredAuditLogger:
                 "criteria_found":    criteria_found,
                 "criteria_count":    len(criteria_found),
                 "is_fallback":       is_fallback,
+            },
+        )
+
+    def log_llm_not_configured(
+        self,
+        configured_backend: str,
+        application_id: str,
+        message: str,
+    ) -> None:
+        """Emitted when the rubric stage fails because no real LLM backend is set."""
+        self._emit(
+            event_type=AuditEventType.LLM_NOT_CONFIGURED,
+            payload={
+                "configured_backend": configured_backend,
+                "application_id":     application_id,
+                "message":            message,
             },
         )
 

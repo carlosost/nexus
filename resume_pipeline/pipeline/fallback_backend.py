@@ -4,9 +4,9 @@ LLM Provider Resilience — Automatic Failover Backend.
 Architecture
 ────────────
                  ┌──────────────────────────┐
-                 │   FallbackLLMBackend      │
-                 │   primary: LLMBackend     │
-                 │   fallback: LLMBackend    │
+                 │   FallbackLLMBackend     │
+                 │   primary: LLMBackend    │
+                 │   fallback: LLMBackend   │
                  └───────────┬──────────────┘
                              │
                     primary.complete()
@@ -22,8 +22,8 @@ Architecture
                     fallback.complete()
                              │
            ┌─────────────────┼───────────────────────┐
-           │ Success                                  │ Exception
-           ▼                                          ▼
+           │ Success                                 │ Exception
+           ▼                                         ▼
   used_fallback = True                    emit: fallback_llm_exhausted
   emit: fallback_llm_succeeded            re-raise
   return result
@@ -47,9 +47,9 @@ Integration points
 
 Configuration (via make_rubric_backend)
 ────────────────────────────────────────
-  LLM_BACKEND=openai LLM_BACKEND_FALLBACK=anthropic  → FallbackLLMBackend
-  LLM_BACKEND=anthropic LLM_BACKEND_FALLBACK=openai  → FallbackLLMBackend
-  LLM_BACKEND=openai   (no fallback var)              → OpenAIRubricBackend only
+  LLM_BACKEND=openai    LLM_BACKEND_FALLBACK=anthropic  → FallbackLLMBackend
+  LLM_BACKEND=anthropic LLM_BACKEND_FALLBACK=openai     → FallbackLLMBackend
+  LLM_BACKEND=openai    (no fallback var)               → OpenAIRubricBackend only
 """
 
 from __future__ import annotations

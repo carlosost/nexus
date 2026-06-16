@@ -99,7 +99,46 @@ class LLMBackendProtocol(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Mock LLM Backend — for tests
+# Errors
+# ---------------------------------------------------------------------------
+
+class LLMBackendNotConfiguredError(RuntimeError):
+    """
+    Raised when the rubric stage is reached but no real LLM provider is configured.
+
+    Fix: set LLM_BACKEND=openai or LLM_BACKEND=anthropic with the corresponding
+    API key environment variable before starting the server.
+    """
+
+
+# ---------------------------------------------------------------------------
+# Unconfigured backend — null-object that fails loudly at call time
+# ---------------------------------------------------------------------------
+
+class UnconfiguredLLMBackend:
+    """
+    Substituted by make_rubric_backend() when LLM_BACKEND is not set to a
+    recognised real provider.
+
+    Defers the error to complete() so the service process can start cleanly;
+    raises LLMBackendNotConfiguredError the moment the rubric stage tries to
+    call the LLM, producing an explicit 503 instead of silent fallback scores.
+    """
+
+    @property
+    def model_name(self) -> str:
+        return "unconfigured"
+
+    def complete(self, system_prompt: str, user_prompt: str) -> str:
+        raise LLMBackendNotConfiguredError(
+            "No real LLM backend is configured. "
+            "Set LLM_BACKEND=openai or LLM_BACKEND=anthropic with the "
+            "corresponding API key to enable rubric scoring."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Mock LLM Backend — for tests only
 # ---------------------------------------------------------------------------
 
 class MockLLMBackend:
@@ -296,7 +335,10 @@ def _build_single_backend(choice: str) -> "LLMBackendProtocol":
     if choice == "anthropic":
         model = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
         return AnthropicRubricBackend(model=model)
-    return MockLLMBackend("")
+    # Any unrecognised value (including "mock") returns UnconfiguredLLMBackend
+    # so the server starts cleanly but the rubric stage raises a clear 503
+    # instead of silently producing fake fallback scores.
+    return UnconfiguredLLMBackend()
 
 
 def make_rubric_backend(
@@ -309,7 +351,8 @@ def make_rubric_backend(
     Priority order:
       1. Explicit ``backend`` argument
       2. ``LLM_BACKEND`` env var
-      3. ``"mock"`` (safe default — no API key required)
+      3. ``UnconfiguredLLMBackend`` — raises LLMBackendNotConfiguredError at call
+         time if neither "openai" nor "anthropic" is set.
 
     Fallback wiring:
       If ``fallback`` argument is given OR ``LLM_BACKEND_FALLBACK`` env var

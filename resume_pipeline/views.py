@@ -40,6 +40,7 @@ from django.db import IntegrityError
 
 from resume_pipeline.ingestion.job_parser import JobParseError, parse_job_markdown
 from resume_pipeline.ingestion.parser import ResumeParser
+from resume_pipeline.pipeline.rubric_score import LLMBackendNotConfiguredError
 from resume_pipeline.models import Application, Candidate, FinalScore, HumanReview, Job, RubricScore
 from resume_pipeline.pipeline.job_embedder import embed_job_sections
 from resume_pipeline.serializers import (
@@ -347,8 +348,18 @@ class RunPipelineView(APIView):
         application = get_object_or_404(
             Application.objects.select_related("candidate", "job"), pk=pk
         )
-        with pipeline_observability.timed("pipeline_run", application_id=str(application.id)):
-            result = self._service.run(application)
+        try:
+            with pipeline_observability.timed("pipeline_run", application_id=str(application.id)):
+                result = self._service.run(application)
+        except LLMBackendNotConfiguredError as exc:
+            return Response(
+                {
+                    "detail": str(exc),
+                    "code": "llm_not_configured",
+                    "hint": "Set LLM_BACKEND=openai or LLM_BACKEND=anthropic with the corresponding API key.",
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         return Response(result, status=status.HTTP_200_OK)
 
 

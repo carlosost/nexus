@@ -34,6 +34,7 @@ export function useApplications() {
   const [error, setError]               = useState(null);
   const [pollingIds, setPollingIds]     = useState(new Set());
   const [selected, setSelected]         = useState(new Set());
+  const [runErrors, setRunErrors]       = useState(new Map());
 
   // Stable ref to pollingIds so the interval callback never sees stale state
   const pollingRef = useRef(pollingIds);
@@ -154,6 +155,13 @@ export function useApplications() {
     const ids = [...selected];
     if (ids.length === 0) return;
 
+    // Clear previous errors for these IDs
+    setRunErrors((prev) => {
+      const m = new Map(prev);
+      ids.forEach((id) => m.delete(id));
+      return m;
+    });
+
     // 1. Optimistic update: flip all selected rows to "processing"
     setApplications((prev) =>
       prev.map((app) =>
@@ -185,34 +193,58 @@ export function useApplications() {
             next.delete(id);
             return next;
           });
+        } else {
+          // Run failed — revert status and surface error
+          setApplications((prev) =>
+            prev.map((app) => (app.id === id ? { ...app, status: 'pending' } : app))
+          );
+          setPollingIds((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+          const err = result.reason;
+          const msg = err?.body?.detail ?? err?.message ?? 'Pipeline run failed';
+          setRunErrors((prev) => new Map([...prev, [id, msg]]));
         }
-        // On rejection: polling interval will continue to check
       });
     });
   }, [selected, clearSelection]);
 
   const runSingle = useCallback((id) => {
+    setRunErrors((prev) => { const m = new Map(prev); m.delete(id); return m; });
     setApplications((prev) =>
       prev.map((app) => (app.id === id ? { ...app, status: 'processing' } : app))
     );
     setPollingIds((prev) => new Set([...prev, id]));
 
-    runPipeline(id).then((result) => {
-      setApplications((prev) =>
-        prev.map((app) =>
-          app.id === id
-            ? { ...app, status: result?.status ?? 'scored', final_score: result?.final_score ?? null }
-            : app
-        )
-      );
-      setPollingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
+    runPipeline(id)
+      .then((result) => {
+        setApplications((prev) =>
+          prev.map((app) =>
+            app.id === id
+              ? { ...app, status: result?.status ?? 'scored', final_score: result?.final_score ?? null }
+              : app
+          )
+        );
+        setPollingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      })
+      .catch((err) => {
+        setApplications((prev) =>
+          prev.map((app) => (app.id === id ? { ...app, status: 'pending' } : app))
+        );
+        setPollingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        const msg = err?.body?.detail ?? err?.message ?? 'Pipeline run failed';
+        setRunErrors((prev) => new Map([...prev, [id, msg]]));
       });
-    }).catch(() => {
-      // polling interval will continue to check
-    });
   }, []);
 
   // ── Row append (after create) ──────────────────────────────────────────────
@@ -226,6 +258,7 @@ export function useApplications() {
     loading,
     error,
     pollingIds,
+    runErrors,
     selected,
     toggleSelect,
     toggleSelectAll,

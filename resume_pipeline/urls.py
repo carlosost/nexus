@@ -14,12 +14,10 @@ Collection endpoints (list + create):
     GET  /api/applications/                   → list all applications (with scores)
     POST /api/applications/                   → associate job + candidate
 
-Detail endpoints (get / patch / delete):
+Detail endpoints (get / delete):
     GET    /api/jobs/<uuid>/                  → full job record
-    PATCH  /api/jobs/<uuid>/                  → update title / description / must_haves
     DELETE /api/jobs/<uuid>/                  → hard-delete (cascades to Applications)
     GET    /api/candidates/<uuid>/            → full candidate record (with resume_parsed)
-    PATCH  /api/candidates/<uuid>/            → update name / email
     DELETE /api/candidates/<uuid>/            → hard-delete (cascades to Applications)
     DELETE /api/applications/<uuid>/          → remove application record
 

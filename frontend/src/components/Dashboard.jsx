@@ -127,6 +127,7 @@ export default function Dashboard() {
     loading: appsLoading,
     error: appsError,
     pollingIds,
+    runErrors,
     selected,
     toggleSelect,
     toggleSelectAll,
@@ -198,6 +199,7 @@ export default function Dashboard() {
           applications={applications}
           selected={selected}
           pollingIds={pollingIds}
+          runErrors={runErrors}
           onToggle={toggleSelect}
           onToggleAll={toggleSelectAll}
           onReview={setReviewId}
