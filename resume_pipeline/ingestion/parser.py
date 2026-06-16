@@ -99,6 +99,9 @@ class ResumeParser:
         self._obs = observability or _default_obs
         self._audit = audit_logger or _default_audit_logger
 
+        from resume_pipeline.ingestion.experience_extractor import ExperienceExtractor
+        self._experience_extractor = ExperienceExtractor()
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -124,6 +127,12 @@ class ResumeParser:
             try:
                 text, page_count, parser_used, status = self._extract(filepath)
                 sections = self._detector.detect(text)
+                exp_value, exp_source = self._experience_extractor.extract(sections)
+                if exp_value is not None:
+                    sections["total_experience_years"] = exp_value
+                    self._audit.log_experience_years_extracted(
+                        value=exp_value, source=exp_source
+                    )
                 doc = ParsedDocument(
                     raw_text=text,
                     sections=sections,

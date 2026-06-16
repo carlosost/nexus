@@ -96,6 +96,8 @@ class AuditEventType(str, Enum):
     HYBRID_SEARCH_FAILED    = "hybrid_search_failed"
     # RRF fusion events
     RRF_FUSION_DONE = "rrf_fusion_done"
+    # Experience extraction events
+    EXPERIENCE_YEARS_EXTRACTED = "experience_years_extracted"
 
 
 # ---------------------------------------------------------------------------
@@ -1100,6 +1102,26 @@ class StructuredAuditLogger:
                 "exception_type":    exception_type,
                 "exception_message": exception_message,
             },
+        )
+
+    # ------------------------------------------------------------------
+    # Experience extraction events
+    # ------------------------------------------------------------------
+
+    def log_experience_years_extracted(
+        self,
+        value: float,
+        source: str,
+        *,
+        application_id: Optional[str] = None,
+    ) -> None:
+        """Emitted when ExperienceExtractor successfully resolves total_experience_years."""
+        payload: dict = {"value": value, "source": source}
+        if application_id is not None:
+            payload["application_id"] = application_id
+        self._emit(
+            event_type=AuditEventType.EXPERIENCE_YEARS_EXTRACTED,
+            payload=payload,
         )
 
     # ------------------------------------------------------------------
