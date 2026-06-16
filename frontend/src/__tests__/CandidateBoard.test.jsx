@@ -12,8 +12,9 @@ import CandidateBoard from '../components/settings/CandidateBoard.jsx';
 
 vi.mock('../api/client.js', () => ({
   deleteCandidate: vi.fn(),
+  getCandidate:    vi.fn(),
 }));
-import { deleteCandidate } from '../api/client.js';
+import { deleteCandidate, getCandidate } from '../api/client.js';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -48,6 +49,9 @@ function renderBoard(overrides = {}) {
 describe('CandidateBoard', () => {
   beforeEach(() => {
     deleteCandidate.mockReset();
+    getCandidate.mockReset();
+    // Default: return the candidate with resume data
+    getCandidate.mockResolvedValue(CANDIDATE_WITH_RESUME);
   });
 
   // ── List rendering ───────────────────────────────────────────────────────────
@@ -96,32 +100,39 @@ describe('CandidateBoard', () => {
 
   // ── Expand / collapse ────────────────────────────────────────────────────────
 
-  test('clicking expand button shows the detail panel', () => {
+  test('clicking expand button shows the detail panel', async () => {
     renderBoard({ candidates: [CANDIDATE_WITH_RESUME] });
     fireEvent.click(screen.getByTestId(`candidate-expand-${CANDIDATE_WITH_RESUME.id}`));
-    expect(screen.getByTestId(`candidate-detail-${CANDIDATE_WITH_RESUME.id}`)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId(`candidate-detail-${CANDIDATE_WITH_RESUME.id}`)).toBeInTheDocument()
+    );
   });
 
-  test('clicking expand button again collapses the detail panel', () => {
+  test('clicking expand button again collapses the detail panel', async () => {
     renderBoard({ candidates: [CANDIDATE_WITH_RESUME] });
     const btn = screen.getByTestId(`candidate-expand-${CANDIDATE_WITH_RESUME.id}`);
     fireEvent.click(btn);
+    await waitFor(() =>
+      expect(screen.getByTestId(`candidate-detail-${CANDIDATE_WITH_RESUME.id}`)).toBeInTheDocument()
+    );
     fireEvent.click(btn);
     expect(screen.queryByTestId(`candidate-detail-${CANDIDATE_WITH_RESUME.id}`)).not.toBeInTheDocument();
   });
 
-  test('detail panel renders parsed resume sections', () => {
+  test('detail panel renders parsed resume sections', async () => {
     renderBoard({ candidates: [CANDIDATE_WITH_RESUME] });
     fireEvent.click(screen.getByTestId(`candidate-expand-${CANDIDATE_WITH_RESUME.id}`));
-    expect(screen.getByText(/led backend development/i)).toBeInTheDocument();
+    expect(getCandidate).toHaveBeenCalledWith(CANDIDATE_WITH_RESUME.id);
+    await waitFor(() => expect(screen.getByText(/led backend development/i)).toBeInTheDocument());
     expect(screen.getByText(/Python, Django/)).toBeInTheDocument();
   });
 
-  test('detail panel shows fallback text when resume_parsed is empty', () => {
-    const noResume = { ...CANDIDATES[0], resume_parsed: {} };
+  test('detail panel shows fallback text when resume_parsed is empty', async () => {
+    const noResume = { ...CANDIDATES[0] };
+    getCandidate.mockResolvedValue({ ...noResume, resume_parsed: {} });
     renderBoard({ candidates: [noResume] });
     fireEvent.click(screen.getByTestId(`candidate-expand-${noResume.id}`));
-    expect(screen.getByText(/no parsed sections/i)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/no parsed sections/i)).toBeInTheDocument());
   });
 
   // ── Delete flow ──────────────────────────────────────────────────────────────

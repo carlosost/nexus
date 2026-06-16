@@ -34,8 +34,6 @@
 #    LLM_BACKEND=openai LLM_BACKEND_FALLBACK=anthropic \
 #      OPENAI_API_KEY=sk-... ANTHROPIC_API_KEY=ant-... make bootstrap
 #
-#   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
-#
 # ==============================================================================
 
 # ------------------------------------------------------------------------------

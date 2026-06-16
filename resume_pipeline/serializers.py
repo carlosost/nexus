@@ -260,14 +260,14 @@ class RubricBreakdownSerializer(serializers.Serializer):
 
     Nested inside ApplicationScoreSerializer so the reviewer sees
     the full rubric picture, not just the normalized composite.
+    Only the five raw 1–5 criterion scores are included here;
+    normalized_score and evidence_quality live at the top-level score card.
     """
     core_skills = serializers.FloatField(read_only=True)
     relevant_experience = serializers.FloatField(read_only=True)
     scope_impact = serializers.FloatField(read_only=True)
     domain_alignment = serializers.FloatField(read_only=True)
     education_certs = serializers.FloatField(read_only=True)
-    normalized_score = serializers.FloatField(read_only=True)
-    evidence_quality = serializers.FloatField(read_only=True)
 
 
 # ---------------------------------------------------------------------------

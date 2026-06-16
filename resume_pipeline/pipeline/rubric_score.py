@@ -438,7 +438,9 @@ Return ONLY a JSON object in the following format (no prose, no markdown fences)
 
 def _build_user_prompt(resume_parsed: dict, job_requirements: dict) -> str:
     """Format resume and job requirements into the LLM user prompt."""
-    resume_text = json.dumps(resume_parsed, indent=2)
+    # Only include text sections — skip numeric metadata like total_experience_years.
+    text_sections = {k: v for k, v in resume_parsed.items() if isinstance(v, str)}
+    resume_text = json.dumps(text_sections, indent=2)
     req_text = json.dumps(job_requirements, indent=2)
     return (
         f"Resume:\n{resume_text}\n\n"
@@ -501,7 +503,7 @@ class RubricEvaluator:
             model_name=self._llm.model_name,
             system_prompt_len=len(system_prompt),
             user_prompt_len=len(user_prompt),
-            resume_sections=list(resume_parsed.keys()),
+            resume_sections=[k for k, v in resume_parsed.items() if isinstance(v, str)],
             job_requirement_keys=list(job_requirements.keys()),
         )
 

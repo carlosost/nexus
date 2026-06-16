@@ -18,7 +18,7 @@ import os
 
 from rest_framework.exceptions import ValidationError
 
-from resume_pipeline.embeddings import EmbeddingClient, MockEmbeddingBackend
+from resume_pipeline.embeddings import EmbeddingClient, MockEmbeddingBackend, make_embedding_client
 from resume_pipeline.logging_module import audit_logger
 from resume_pipeline.observability import pipeline_observability
 from resume_pipeline.pipeline.rubric_score import LLMBackendNotConfiguredError
@@ -54,9 +54,7 @@ class PipelineService:
 
     def __init__(self, orchestrator=None, embedding_client=None) -> None:
         self._orchestrator = orchestrator or PipelineOrchestrator()
-        self._embedding_client = embedding_client or EmbeddingClient(
-            backend=MockEmbeddingBackend(dim=1536)
-        )
+        self._embedding_client = embedding_client or make_embedding_client()
         backend = getattr(self._embedding_client, "_backend", None)
         audit_logger.log_pipeline_service_init(
             orchestrator_type=type(self._orchestrator).__name__,

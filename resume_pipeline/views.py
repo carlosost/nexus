@@ -48,6 +48,7 @@ from resume_pipeline.ingestion.word_converter import (
 from resume_pipeline.pipeline.rubric_score import LLMBackendNotConfiguredError
 from resume_pipeline.models import Application, Candidate, FinalScore, HumanReview, Job, RubricScore
 from resume_pipeline.pipeline.job_embedder import embed_job_sections
+from resume_pipeline.pipeline.candidate_embedder import embed_candidate_sections
 from resume_pipeline.serializers import (
     ApplicationCreateSerializer,
     ApplicationListSerializer,
@@ -138,9 +139,13 @@ class JobListCreateView(APIView):
         with pipeline_observability.timed("job_embed"):
             try:
                 embed_job_sections(job)
-            except Exception:
-                # Embedding failure must never block the HTTP response.
-                pass
+            except Exception as exc:
+                audit_logger.log_pipeline_exception(
+                    application_id=f"job:{job.id}",
+                    stage="job_embedding",
+                    exception_type=type(exc).__name__,
+                    exception_message=str(exc),
+                )
 
         return Response(JobDetailSerializer(job).data, status=status.HTTP_201_CREATED)
 
@@ -237,6 +242,18 @@ class CandidateListCreateView(APIView):
             candidate_id=str(candidate.id),
             name=candidate.name,
         )
+
+        with pipeline_observability.timed("candidate_embed"):
+            try:
+                embed_candidate_sections(candidate)
+            except Exception as exc:
+                audit_logger.log_pipeline_exception(
+                    application_id=f"candidate:{candidate.id}",
+                    stage="candidate_embedding",
+                    exception_type=type(exc).__name__,
+                    exception_message=str(exc),
+                )
+
         return Response(CandidateListSerializer(candidate).data, status=status.HTTP_201_CREATED)
 
 

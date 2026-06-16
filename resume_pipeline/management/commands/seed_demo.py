@@ -28,6 +28,8 @@ from resume_pipeline.management.commands._seed_data import (
     JOB_SPEC,
     CANDIDATE_SPECS,
 )
+from resume_pipeline.pipeline.job_embedder import embed_job_sections
+from resume_pipeline.pipeline.candidate_embedder import embed_candidate_sections
 
 logger = logging.getLogger("pipeline.audit")
 
@@ -84,6 +86,13 @@ class Command(BaseCommand):
                 "must_haves": JOB_SPEC["must_haves"],
             },
         )
+        if job_created:
+            try:
+                embed_job_sections(job)
+            except Exception as exc:
+                logger.warning(
+                    f"seed_demo: job embedding failed for '{job.title}': {exc}"
+                )
 
         candidates_created = 0
         for spec in CANDIDATE_SPECS:
@@ -98,6 +107,12 @@ class Command(BaseCommand):
             )
             if cand_created:
                 candidates_created += 1
+                try:
+                    embed_candidate_sections(candidate)
+                except Exception as exc:
+                    logger.warning(
+                        f"seed_demo: candidate embedding failed for '{candidate.name}': {exc}"
+                    )
 
             # Application — unique on (job, candidate)
             Application.objects.get_or_create(

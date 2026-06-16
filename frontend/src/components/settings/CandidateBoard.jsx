@@ -15,10 +15,10 @@
  *   onRemove    {(id: string) => void}
  */
 
-import { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import CandidateIngestionModal from '../CandidateIngestionModal.jsx';
 import DeleteConfirmModal      from './DeleteConfirmModal.jsx';
-import { deleteCandidate }     from '../../api/client.js';
+import { deleteCandidate, getCandidate } from '../../api/client.js';
 
 function fmt(iso) {
   return iso ? new Date(iso).toLocaleDateString() : '—';
@@ -30,10 +30,25 @@ export default function CandidateBoard({
   const [expanded,     setExpanded]    = useState(null);
   const [creating,     setCreating]    = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [detailCache,  setDetailCache] = useState({});
+  const [detailLoading, setDetailLoading] = useState(null);
 
-  function toggleExpand(id) {
-    setExpanded((prev) => (prev === id ? null : id));
-  }
+  const toggleExpand = useCallback(async (id) => {
+    if (expanded === id) {
+      setExpanded(null);
+      return;
+    }
+    setExpanded(id);
+    if (!detailCache[id]) {
+      setDetailLoading(id);
+      try {
+        const detail = await getCandidate(id);
+        setDetailCache((prev) => ({ ...prev, [id]: detail }));
+      } finally {
+        setDetailLoading(null);
+      }
+    }
+  }, [expanded, detailCache]);
 
   async function handleDelete() {
     await deleteCandidate(deleteTarget.id);
@@ -84,7 +99,7 @@ export default function CandidateBoard({
           </thead>
           <tbody>
             {candidates.map((c) => (
-              <>
+              <React.Fragment key={c.id}>
                 <tr
                   key={c.id}
                   className={`admin-table__row${expanded === c.id ? ' admin-table__row--expanded' : ''}`}
@@ -118,24 +133,29 @@ export default function CandidateBoard({
                   <tr key={`${c.id}-detail`} className="admin-table__detail-row">
                     <td colSpan={4} className="admin-table__detail-cell">
                       <div className="candidate-detail" data-testid={`candidate-detail-${c.id}`}>
-                        {c.resume_parsed && Object.keys(c.resume_parsed).length > 0
-                          ? Object.entries(c.resume_parsed).map(([section, text]) => (
-                              <div key={section} className="candidate-detail__section">
-                                <h4 className="candidate-detail__label">
-                                  {section.replace(/_/g, ' ')}
-                                </h4>
-                                <p className="candidate-detail__text">
-                                  {typeof text === 'string' ? text : JSON.stringify(text)}
-                                </p>
-                              </div>
-                            ))
-                          : <p className="candidate-detail__text">No parsed sections available.</p>
-                        }
+                        {detailLoading === c.id ? (
+                          <p className="candidate-detail__text"><span className="spinner" /> Loading…</p>
+                        ) : (() => {
+                          const parsed = detailCache[c.id]?.resume_parsed;
+                          const textSections = parsed
+                            ? Object.entries(parsed).filter(([, v]) => typeof v === 'string' && v.trim())
+                            : [];
+                          return textSections.length > 0
+                            ? textSections.map(([section, text]) => (
+                                <div key={section} className="candidate-detail__section">
+                                  <h4 className="candidate-detail__label">
+                                    {section.replace(/_/g, ' ')}
+                                  </h4>
+                                  <p className="candidate-detail__text">{text}</p>
+                                </div>
+                              ))
+                            : <p className="candidate-detail__text">No parsed sections available.</p>;
+                        })()}
                       </div>
                     </td>
                   </tr>
                 )}
-              </>
+              </React.Fragment>
             ))}
           </tbody>
         </table>

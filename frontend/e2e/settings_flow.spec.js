@@ -460,6 +460,12 @@ test('Given a candidate with resume sections, When user expands the row, Then se
   };
 
   await mockApiCollections(page, { candidates: [candidateWithResume] });
+
+  // The component fetches GET /api/candidates/<id>/ on expand to get resume_parsed.
+  await page.route(`**/api/candidates/${CANDIDATE.id}/`, (route) =>
+    route.fulfill({ json: candidateWithResume })
+  );
+
   await page.goto('/settings');
   await page.getByTestId('tab-candidates').click();
 

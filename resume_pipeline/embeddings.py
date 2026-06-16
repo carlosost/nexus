@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import random
 from typing import Protocol
 
@@ -178,3 +179,26 @@ class EmbeddingClient:
         if len(text) > self._max_chars:
             text = text[: self._max_chars]
         return text
+
+
+# ---------------------------------------------------------------------------
+# Factory — mirrors make_rubric_backend() in rubric_score.py
+# ---------------------------------------------------------------------------
+
+def make_embedding_client(dim: int = 1536) -> EmbeddingClient:
+    """
+    Instantiate the correct embedding backend driven by LLM_BACKEND env var.
+
+    - ``LLM_BACKEND=openai``     → OpenAIEmbeddingBackend (real vectors)
+    - anything else              → MockEmbeddingBackend (deterministic, no network)
+
+    Anthropic has no embeddings API, so it falls through to mock.
+    A dedicated ``EMBEDDING_BACKEND`` env var can override independently.
+    """
+    choice = os.environ.get("EMBEDDING_BACKEND") or os.environ.get("LLM_BACKEND", "mock")
+    if choice == "openai":
+        from openai import OpenAI
+        backend = OpenAIEmbeddingBackend(OpenAI())
+    else:
+        backend = MockEmbeddingBackend(dim=dim)
+    return EmbeddingClient(backend=backend)
