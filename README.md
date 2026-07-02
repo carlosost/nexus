@@ -1,8 +1,8 @@
-# Elvex Nexus
+# Nexus
 
 **Stop screening resumes by gut feeling. Score them with a pipeline you can audit.**
 
-Elvex Nexus turns a job description and a stack of PDF, DOC or DOCX resumes into ranked, explainable candidate scores — hard-gate filtering, semantic similarity, LLM-based rubric scoring, and a human-in-the-loop review layer, all wired into one Django + React stack you can run with a single command.
+Nexus turns a job description and a stack of PDF, DOC or DOCX resumes into ranked, explainable candidate scores — hard-gate filtering, semantic similarity, LLM-based rubric scoring, and a human-in-the-loop review layer, all wired into one Django + React stack you can run with a single command.
 
 > In advance, two very important information: Section "Quick Start" bellow has instructions to run the application with real LLM conectivity. Documentation "ARCHITECTURE_DECISIONS.md" has a template of Job Description to be used to create new Jobs.
 
@@ -42,8 +42,8 @@ Resume screening tools tend to fall into two camps: keyword-matching ATS softwar
 ### Option A: Docker (recommended — zero local dependencies)
 
 ```bash
-git clone <your-fork-url> elvex-nexus
-cd elvex-nexus
+git clone <your-fork-url> nexus
+cd nexus
 
 # Boots Postgres + pgvector, runs migrations, seeds demo data
 # (Alice / Bob / Carol), and starts Gunicorn on :8000 — no API keys needed.
